@@ -12,17 +12,18 @@
       content="default-src 'none'; script-src 'self'; style-src 'self'; img-src 'self' data:; connect-src 'self'; media-src 'self' blob:; worker-src 'self' blob:; base-uri 'none'; form-action 'none'; frame-ancestors 'none'; object-src 'none'"
     />
     <title>中俄实时翻译会议</title>
-    <link rel="stylesheet" href="/join/styles.css" />
+    <link rel="icon" href="/logo-mark.svg" type="image/svg+xml" />
+    <link rel="stylesheet" href="/join/styles.css?v=20260720-1" />
     <script src="/socket.io/socket.io.js" defer></script>
     <script src="/join/app.js" defer></script>
   </head>
   <body>
     <div class="page-shell">
       <header class="topbar">
-        <a class="brand" href="/join" aria-label="TOOYEI Translator">
-          <span class="brand-mark" aria-hidden="true">中·RU</span>
+        <a class="brand" href="/" aria-label="RUSCNY 中俄实时翻译">
+          <span class="brand-mark" aria-hidden="true"><img src="/logo-mark.svg" alt="" /></span>
           <span class="brand-copy">
-            <strong>TOOYEI</strong>
+            <strong>RUSCNY</strong>
             <span data-i18n="productName">中俄实时翻译</span>
           </span>
         </a>
@@ -39,8 +40,8 @@
         <section id="join-view" class="join-layout" aria-labelledby="join-title">
           <div class="join-intro">
             <div class="eyebrow" data-i18n="guestMeeting">临时参会</div>
-            <h1 id="join-title" data-i18n="joinTitle">无需安装，直接进入翻译会议</h1>
-            <p data-i18n="joinLead">填写本次参会资料后，即可查看实时原文、译文和发言人信息。</p>
+            <h1 id="join-title" data-i18n="joinTitle">无需安装，直接加入会议</h1>
+            <p data-i18n="joinLead">填写参会资料后，即可查看实时原文、译文和发言人。</p>
             <ul class="feature-list" aria-label="Meeting features">
               <li><span aria-hidden="true">●</span><span data-i18n="featureRealtime">中俄双向实时翻译</span></li>
               <li><span aria-hidden="true">●</span><span data-i18n="featureIdentity">每段内容都标明发言人</span></li>

@@ -100,15 +100,19 @@ select:focus-visible {
 .brand-mark {
   width: 46px;
   height: 46px;
+  padding: 5px;
   display: grid;
   place-items: center;
+  border: 1px solid var(--line);
   border-radius: 14px;
-  background: linear-gradient(145deg, var(--teal-600), var(--teal-950));
-  box-shadow: 0 8px 22px rgb(11 110 105 / 26%);
-  color: #fff;
-  font-size: 12px;
-  font-weight: 800;
-  letter-spacing: -0.03em;
+  background: rgb(255 255 255 / 82%);
+  box-shadow: 0 8px 22px rgb(11 79 67 / 14%);
+}
+
+.brand-mark img {
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 
 .brand-copy {
@@ -170,6 +174,7 @@ select:focus-visible {
   font-size: clamp(38px, 5vw, 64px);
   line-height: 1.08;
   letter-spacing: -0.045em;
+  text-wrap: balance;
 }
 
 .join-intro > p {
@@ -178,6 +183,7 @@ select:focus-visible {
   color: #536966;
   font-size: 17px;
   line-height: 1.8;
+  text-wrap: balance;
 }
 
 .feature-list {
@@ -967,6 +973,7 @@ select:focus-visible {
 @media (max-width: 620px) {
   .topbar {
     width: min(100% - 24px, 1240px);
+    min-height: 82px;
   }
 
   .brand-copy span {
@@ -979,7 +986,14 @@ select:focus-visible {
   }
 
   .join-intro > p {
-    font-size: 15px;
+    max-width: 100%;
+    font-size: 14px;
+  }
+
+  .join-intro h1 {
+    max-width: 100%;
+    font-size: clamp(26px, 7vw, 32px);
+    line-height: 1.2;
   }
 
   .feature-list {

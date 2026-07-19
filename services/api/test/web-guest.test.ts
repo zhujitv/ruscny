@@ -23,7 +23,20 @@ describe('browser guest meeting client', () => {
     expect(response.headers['content-security-policy']).not.toContain("connect-src 'none'");
     expect(response.body).toContain('/socket.io/socket.io.js');
     expect(response.body).toContain('id="guest-form"');
+    expect(response.body).toContain('src="/logo-mark.svg"');
+    expect(response.body).toContain('<strong>RUSCNY</strong>');
+    expect(response.body).toContain('无需安装，直接加入会议');
+    expect(response.body).not.toContain('TOOYEI');
     expect(response.body).not.toContain(token);
+  });
+
+  it('keeps the mobile guest heading and lead free of orphaned final characters', async () => {
+    app = await buildApp({ logger: false, realtime: false });
+    const response = await app.inject({ method: 'GET', url: '/join/styles.css' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.body).toContain('text-wrap: balance');
+    expect(response.body).toContain('font-size: clamp(26px, 7vw, 32px)');
   });
 
   it('serves the client bundle with realtime, audio and review event support', async () => {

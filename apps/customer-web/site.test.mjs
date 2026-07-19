@@ -207,4 +207,6 @@ test('mobile layout uses fluid widths for large visual modules', async () => {
   assert.match(mobile[1], /\.language-bridge\s*\{[^}]*width:100%/);
   assert.match(mobile[1], /\.minutes-demo\s*\{[^}]*width:100%/);
   assert.match(mobile[1], /\.final-actions\s*\{[^}]*grid-template-columns:1fr/);
+  assert.match(mobile[1], /\.nav-shell\s*\{[^}]*padding-block:12px/);
+  assert.match(mobile[1], /\.nav-shell\s*\{[^}]*row-gap:0/);
 });

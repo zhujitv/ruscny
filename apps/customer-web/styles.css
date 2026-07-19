@@ -274,7 +274,7 @@ button:focus-visible, a:focus-visible, input:focus-visible, select:focus-visible
 }
 
 @media (max-width: 680px) {
-  .section-shell, .nav-shell { width:min(calc(100% - 28px),1200px); }.section-block { padding-top:44px; padding-bottom:44px; }
+  .section-shell, .nav-shell { width:min(calc(100% - 28px),1200px); }.nav-shell { min-height:0; padding-block:12px; column-gap:12px; row-gap:0; }.section-block { padding-top:44px; padding-bottom:44px; }
   .brand-copy small { display:none; }.nav-actions { margin-left:0; }.locale-picker select { min-height:38px; }
   .hero { width:100%; min-width:0; padding-top:50px; padding-bottom:52px; gap:34px; }.hero-copy,.hero-values,.hero-actions { width:100%; min-width:0; max-width:100%; }.hero h1 { font-size:46px; }.hero-lead { max-width:100%; overflow-wrap:anywhere; font-size:16px; }.hero-values { grid-template-columns:1fr; }.hero-values article { width:100%; min-width:0; min-height:76px; }.hero-actions .button { width:100%; }.trust-row { display:grid; }
   .hero-product { width:100%; min-width:0; min-height:370px; overflow:hidden; }.hero-product::before { width:360px; height:360px; }.orbit-one { width:320px; height:320px; }.orbit-two { width:420px; height:420px; }.product-window { width:100%; max-width:100%; transform:none; border-radius:18px; }.window-bar { height:52px; padding:0 13px; }.meeting-stage { min-height:330px; grid-template-columns:96px minmax(0,1fr); }.people-rail { padding:12px 5px; }.people-rail > p { margin-inline:4px; }.person { padding:7px 4px; grid-template-columns:27px minmax(0,1fr) 5px; gap:5px; }.avatar { width:27px; height:27px; }.speech-stream { min-width:0; padding:12px 10px 70px; }.talk-demo { right:10px; left:10px; bottom:12px; }.floating-note { display:none; }

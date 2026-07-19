@@ -5,8 +5,8 @@
     zh: {
       documentTitle: '中俄实时翻译会议',
       productName: '中俄实时翻译', interfaceLanguage: '界面语言',
-      guestMeeting: '临时参会', joinTitle: '无需安装，直接进入翻译会议',
-      joinLead: '填写本次参会资料后，即可查看实时原文、译文和发言人信息。',
+      guestMeeting: '临时参会', joinTitle: '无需安装，直接加入会议',
+      joinLead: '填写参会资料后，即可查看实时原文、译文和发言人。',
       featureRealtime: '中俄双向实时翻译', featureIdentity: '每段内容都标明发言人',
       featureReconnect: '断线后自动重连和补拉', inviteDetected: '已识别会议邀请',
       roomCode: '房间码', roomCodePlaceholder: '6–8 位数字', displayName: '姓名或显示名称',
