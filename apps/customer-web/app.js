@@ -13,7 +13,7 @@ const translations = {
     featureVoiceTitle: '按住说话，松开翻译', featureVoiceText: '保留自然直观的操作方式，完成识别、翻译和译文语音播放。',
     featureInviteTitle: '多种邀请方式', featureInviteText: '好友邀请、二维码、邀请链接和房间码同时保留，临时用户无需安装也能从浏览器加入。',
     featureRecordTitle: '记录、导出与会议纪要', featureRecordText: '按时间或发言者查看完整内容，复制或导出 TXT、Markdown，并生成保留各方观点与负责人信息的会议纪要。',
-    meetingEyebrow: '一个房间，多方参与', meetingTitle: '多人同时参会，\n发言与翻译依然清楚有序。', meetingLead: '每位参会者拥有独立身份和语言。主持人随时查看在线状态、邀请好友或移出人员；会议结束后立即转为只读。',
+    meetingEyebrow: '一个房间，多方参与', meetingTitle: '多人同时参会，\n发言翻译清楚有序。', meetingLead: '每位参会者拥有独立身份和语言。主持人随时查看在线状态、邀请好友或移出人员；会议结束后立即转为只读。',
     meetingCheck1: '注册用户与临时用户同时参会', meetingCheck2: '在线、离线、离开和移出状态清晰', meetingCheck3: '断线重连后顺序与身份不丢失', instantTranslation: '即时翻译',
     workflowEyebrow: '三步开始沟通', workflowTitle: '不改变说话习惯，减少沟通成本。', step1Title: '创建或加入会议', step1Text: '通过好友邀请、二维码、链接或房间码进入。', hold: '按住', step2Title: '按住说话', step2Text: '选择中文或俄语，松开后自动提交翻译。', step3Title: '同步查看与保存', step3Text: '所有设备实时显示，会后继续查看和导出。',
     securityEyebrow: '权限由服务端决定', securityTitle: '会议内容只属于\n真正参与的人。', securityLead: '客户端不能自行伪造身份或权限。所有消息、人员、历史、导出和纪要均按单次会议隔离。', privacyLink: '了解隐私与数据处理',
