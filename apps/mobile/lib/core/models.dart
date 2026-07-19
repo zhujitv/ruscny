@@ -701,6 +701,7 @@ final class MeetingSummary {
   final bool? isStale;
   final int? approvedRevision;
   final DateTime? approvedAt;
+
   bool get isApproved => approvedAt != null && approvedRevision == revision;
 
   factory MeetingSummary.fromJson(Map<String, dynamic> json) => MeetingSummary(
@@ -729,7 +730,9 @@ final class MeetingSummary {
         sourceMessageCount: (json['sourceMessageCount'] as num?)?.toInt(),
         isStale: json['isStale'] is bool ? json['isStale'] as bool : null,
         approvedRevision: (json['approvedRevision'] as num?)?.toInt(),
-        approvedAt: json['approvedAt'] == null ? null : _date(json['approvedAt']),
+        approvedAt: json['approvedAt'] == null
+            ? null
+            : _date(json['approvedAt']),
       );
 }
 

@@ -327,6 +327,7 @@ describe.sequential('PostgreSQL API isolation and concurrency', () => {
       `/v1/conversations/${conversation.id}/summary`,
       host.accessToken,
       {},
+      { 'idempotency-key': 'integration-summary-generation-0001' },
     );
     expect(summary.statusCode).toBe(200);
     expect(summary.json().data.summary.participantRoster).toHaveLength(2);
@@ -917,12 +918,16 @@ function request(
   url: string,
   accessToken?: string,
   payload?: object,
+  headers?: Record<string, string>,
 ) {
   return app.inject({
     method,
     url,
     remoteAddress: `127.0.0.${(counter % 200) + 1}`,
-    headers: accessToken ? { authorization: `Bearer ${accessToken}` } : {},
+    headers: {
+      ...(accessToken ? { authorization: `Bearer ${accessToken}` } : {}),
+      ...headers,
+    },
     ...(payload ? { payload } : {}),
   });
 }

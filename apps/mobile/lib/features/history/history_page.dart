@@ -730,7 +730,10 @@ final class _ConversationDetailPageState
                 onPressed: () async {
                   Navigator.pop(context);
                   try {
-                    await repository.approveSummary(conversation.id, summary.revision);
+                    await repository.approveSummary(
+                      conversation.id,
+                      summary.revision,
+                    );
                     if (mounted) _snack('会议纪要已确认，可以邮件分发');
                   } catch (error) {
                     if (mounted) _snack(readableError(error));
