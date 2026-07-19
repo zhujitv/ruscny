@@ -83,8 +83,22 @@ final class MessageLedger {
     if (incoming.reviewRevision != existing.reviewRevision) {
       return incoming.reviewRevision > existing.reviewRevision;
     }
+    final incomingTtsRank = _ttsRank(incoming);
+    final existingTtsRank = _ttsRank(existing);
+    if (incomingTtsRank != existingTtsRank) {
+      return incomingTtsRank > existingTtsRank;
+    }
     return _reviewRank(incoming.reviewStatus) >=
         _reviewRank(existing.reviewStatus);
+  }
+
+  static int _ttsRank(TranslationMessage message) {
+    if (message.audioUrl?.isNotEmpty == true) return 2;
+    if (message.errorCode == 'TTS_PENDING' ||
+        message.errorCode == 'TTS_PROCESSING') {
+      return 0;
+    }
+    return 1;
   }
 
   static int _reviewRank(MessageReviewStatus status) => switch (status) {

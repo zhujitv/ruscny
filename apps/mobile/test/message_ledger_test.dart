@@ -188,6 +188,30 @@ void main() {
       expect(result.single.reviewStatus, MessageReviewStatus.confirmed);
       expect(result.single.sourceText, '已确认版本');
     });
+
+    test('late TTS-pending response cannot remove an already playable URL', () {
+      final ledger = MessageLedger('conv-a');
+      ledger.merge([
+        message(
+          id: 'm1',
+          conversationId: 'conv-a',
+          sequence: 1,
+          audioUrl: 'https://api.example.test/audio.wav',
+        ),
+      ]);
+
+      final result = ledger.merge([
+        message(
+          id: 'm1',
+          conversationId: 'conv-a',
+          sequence: 1,
+          errorCode: 'TTS_PENDING',
+        ),
+      ]);
+
+      expect(result.single.audioUrl, 'https://api.example.test/audio.wav');
+      expect(result.single.errorCode, isNull);
+    });
   });
 }
 
@@ -199,6 +223,8 @@ TranslationMessage message({
   int reviewRevision = 0,
   MessageReviewStatus reviewStatus = MessageReviewStatus.unreviewed,
   String sourceText = '你好',
+  String? audioUrl,
+  String? errorCode,
 }) =>
     TranslationMessage(
       id: id,
@@ -209,9 +235,11 @@ TranslationMessage message({
       targetLanguage: Language.ru,
       sourceText: sourceText,
       translatedText: 'Здравствуйте',
+      audioUrl: audioUrl,
       status: status,
       sequence: sequence,
       createdAt: DateTime.utc(2026, 7, 18),
       reviewRevision: reviewRevision,
       reviewStatus: reviewStatus,
+      errorCode: errorCode,
     );

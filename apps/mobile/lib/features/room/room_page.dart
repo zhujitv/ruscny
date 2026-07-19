@@ -1090,6 +1090,26 @@ final class _MessageCard extends StatelessWidget {
                         ),
                       ),
                     ],
+                    if (message.audioUrl?.isNotEmpty != true &&
+                        (message.errorCode == 'TTS_PENDING' ||
+                            message.errorCode == 'TTS_PROCESSING')) ...[
+                      const SizedBox(height: 7),
+                      const Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          SizedBox(
+                            width: 12,
+                            height: 12,
+                            child: CircularProgressIndicator(strokeWidth: 1.5),
+                          ),
+                          SizedBox(width: 6),
+                          AppText(
+                            '正在生成译文语音…',
+                            style: TextStyle(fontSize: 12),
+                          ),
+                        ],
+                      ),
+                    ],
                   ],
                 ),
             },
@@ -1151,6 +1171,7 @@ final class RoomPushToTalkButton extends StatelessWidget {
   Widget build(BuildContext context) {
     final recording = action == RoomAction.recording;
     final uploading = action == RoomAction.uploading;
+    final processing = action == RoomAction.processing;
     final sendFailed = action == RoomAction.sendFailed;
     // RoomPage intentionally disables starting a second recording as soon as
     // state becomes `recording`. The recognizer must nevertheless keep its
@@ -1160,8 +1181,9 @@ final class RoomPushToTalkButton extends StatelessWidget {
     final visuallyEnabled = enabled || canRelease;
     return GestureDetector(
       key: const ValueKey('room-push-to-talk-gesture'),
-      onLongPressStart:
-          enabled && !uploading && !sendFailed ? (_) => onStart() : null,
+      onLongPressStart: enabled && !uploading && !processing && !sendFailed
+          ? (_) => onStart()
+          : null,
       onLongPressEnd: canRelease ? (_) => onEnd() : null,
       onLongPressCancel: canRelease ? onCancel : null,
       child: AnimatedContainer(
@@ -1184,9 +1206,11 @@ final class RoomPushToTalkButton extends StatelessWidget {
                   ? Icons.mic
                   : uploading
                       ? Icons.upload
-                      : sendFailed
-                          ? Icons.error_outline
-                          : Icons.mic_none,
+                      : processing
+                          ? Icons.hourglass_top
+                          : sendFailed
+                              ? Icons.error_outline
+                              : Icons.mic_none,
               color: visuallyEnabled ? Colors.white : Colors.black45,
             ),
             const SizedBox(width: 8),
@@ -1195,11 +1219,13 @@ final class RoomPushToTalkButton extends StatelessWidget {
                   ? '松开发送'
                   : uploading
                       ? '正在上传…'
-                      : sendFailed
-                          ? '请先处理未发送录音'
-                          : enabled
-                              ? '按住说${language.label}'
-                              : '等待连接',
+                      : processing
+                          ? '正在识别和翻译…'
+                          : sendFailed
+                              ? '请先处理未发送录音'
+                              : enabled
+                                  ? '按住说${language.label}'
+                                  : '等待连接',
               style: TextStyle(
                 color: visuallyEnabled ? Colors.white : Colors.black45,
                 fontWeight: FontWeight.bold,

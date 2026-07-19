@@ -19,7 +19,7 @@ import '../../core/realtime/room_realtime_client.dart';
 import '../auth/auth_controller.dart';
 import '../conversations/conversation_repository.dart';
 
-enum RoomAction { idle, recording, uploading, sendFailed }
+enum RoomAction { idle, recording, uploading, processing, sendFailed }
 
 enum _RecordingRelease { send, cancel }
 
@@ -151,6 +151,7 @@ final class RoomController extends StateNotifier<RoomState> {
   MessageLedger _ledger;
   late final StreamSubscription<RoomEvent> _eventSubscription;
   final Set<String> _playedFinalMessageIds = {};
+  final Set<String> _ttsRefreshInFlight = {};
   final Set<String> _messageReviewInFlight = {};
   Future<bool>? _backfillInFlight;
   bool _authRecoveryInFlight = false;
@@ -369,15 +370,14 @@ final class RoomController extends StateNotifier<RoomState> {
         final merged = _ledger.merge([message]);
         state = state.copyWith(messages: merged, clearError: true);
         if (message.sequence > 0) unawaited(_cacheMessage(message));
-        final firstFinalDelivery =
+        final firstPlayableDelivery =
             message.status == MessageStatus.finalResult &&
+                message.audioUrl?.isNotEmpty == true &&
                 _playedFinalMessageIds.add(message.id);
-        if (message.status == MessageStatus.finalResult &&
-            message.audioUrl?.isNotEmpty == true &&
-            !replayed &&
-            firstFinalDelivery) {
+        if (!replayed && firstPlayableDelivery) {
           unawaited(_autoPlay(message.audioUrl!));
         }
+        if (_isTtsPending(message)) unawaited(_refreshPendingTts(message));
         if (_socketLatestSequence != null) {
           if (message.sequence > _socketLatestSequence!) {
             _socketLatestSequence = message.sequence;
@@ -846,6 +846,13 @@ final class RoomController extends StateNotifier<RoomState> {
         path: pending.path,
         sourceLanguage: pending.sourceLanguage,
         idempotencyKey: pending.idempotencyKey,
+        onUploaded: () {
+          if (!_disposed &&
+              identical(_pendingAudio, pending) &&
+              state.action == RoomAction.uploading) {
+            state = state.copyWith(action: RoomAction.processing);
+          }
+        },
       );
       if (_disposed || !identical(_pendingAudio, pending)) return;
       final message = TranslationMessage.fromJson(result);
@@ -886,7 +893,11 @@ final class RoomController extends StateNotifier<RoomState> {
 
   Future<void> discardPendingAudio() async {
     final pending = _pendingAudio;
-    if (pending == null || state.action == RoomAction.uploading) return;
+    if (pending == null ||
+        state.action == RoomAction.uploading ||
+        state.action == RoomAction.processing) {
+      return;
+    }
     _pendingAudio = null;
     final cleanupError = await _deletePendingPath(pending.path);
     if (!_disposed) {
@@ -919,8 +930,53 @@ final class RoomController extends StateNotifier<RoomState> {
     }
     if (!_disposed &&
         (state.action == RoomAction.uploading ||
+            state.action == RoomAction.processing ||
             state.action == RoomAction.sendFailed)) {
       state = state.copyWith(action: RoomAction.idle);
+    }
+  }
+
+  bool _isTtsPending(TranslationMessage message) =>
+      message.status == MessageStatus.finalResult &&
+      message.audioUrl?.isNotEmpty != true &&
+      (message.errorCode == 'TTS_PENDING' ||
+          message.errorCode == 'TTS_PROCESSING');
+
+  Future<void> _refreshPendingTts(TranslationMessage pending) async {
+    if (!_ttsRefreshInFlight.add(pending.id)) return;
+    try {
+      for (var attempt = 0; attempt < 30 && !_disposed; attempt += 1) {
+        await Future<void>.delayed(const Duration(seconds: 1));
+        if (_disposed) return;
+        TranslationMessage? current;
+        for (final item in state.messages) {
+          if (item.id == pending.id) {
+            current = item;
+            break;
+          }
+        }
+        if (current != null && !_isTtsPending(current)) return;
+        final page = await _repository.messages(
+          conversationId,
+          afterSequence: pending.sequence > 0 ? pending.sequence - 1 : 0,
+          limit: 2,
+        );
+        TranslationMessage? fresh;
+        for (final candidate in page) {
+          if (candidate.id == pending.id) {
+            fresh = candidate;
+            break;
+          }
+        }
+        if (fresh == null) return;
+        _handleEvent(MessageReceived(fresh));
+        if (!_isTtsPending(fresh)) return;
+      }
+    } catch (_) {
+      // Socket delivery remains the primary path. Polling only closes the gap
+      // when TTS finishes while realtime synchronization is disconnected.
+    } finally {
+      _ttsRefreshInFlight.remove(pending.id);
     }
   }
 

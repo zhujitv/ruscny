@@ -92,4 +92,25 @@ void main() {
 
     expect(cancels, 1);
   });
+
+  testWidgets('shows model processing separately from network upload',
+      (tester) async {
+    await tester.pumpWidget(
+      MaterialApp(
+        home: Scaffold(
+          body: RoomPushToTalkButton(
+            action: RoomAction.processing,
+            language: Language.zh,
+            enabled: false,
+            onStart: () {},
+            onEnd: () {},
+            onCancel: () {},
+          ),
+        ),
+      ),
+    );
+
+    expect(find.text('正在识别和翻译…'), findsOneWidget);
+    expect(find.text('正在上传…'), findsNothing);
+  });
 }

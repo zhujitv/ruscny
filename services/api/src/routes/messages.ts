@@ -19,9 +19,11 @@ import {
   getParticipant,
   messageDto,
 } from '../services/conversations.js';
-import { deleteTtsAsset, persistTtsAudio } from '../services/audio-assets.js';
-import { enqueueAudioDeletionJobsNow } from '../services/audio-deletion-outbox.js';
 import { PROCESSING_LEASE_MS } from '../services/message-processing.js';
+import {
+  TTS_PENDING_CODE,
+  wakeTtsGenerationWorker,
+} from '../services/tts-generation.js';
 
 type SpeechLanguage = 'zh' | 'ru';
 
@@ -128,7 +130,6 @@ async function processMessage(input: ProcessInput) {
     translatedText: undefined,
   });
 
-  let generatedAudioAsset: string | null = null;
   let recognizedSourceText = input.sourceText;
   try {
     const transcription = input.sourceText
@@ -164,43 +165,26 @@ async function processMessage(input: ProcessInput) {
       targetLanguage: input.targetLanguage,
       terms,
     });
-    let audioUrl: string | null = null;
-    let ttsError: string | null = null;
-    try {
-      const speech = await translationProvider.synthesize({
-        text: translation.text,
-        language: input.targetLanguage,
-      });
-      audioUrl = await persistTtsAudio(speech.audioUrl);
-      generatedAudioAsset = audioUrl;
-    } catch {
-      ttsError = 'TTS_FAILED';
-    }
     const finalResult = await commitFinalMessage({
       processing,
       conversationId: input.conversationId,
       sourceText: transcription.text,
       translatedText: translation.text,
-      audioUrl,
+      audioUrl: null,
       provider: translation.provider,
       providerRequestId: translation.requestId ?? transcription.requestId,
-      errorCode: ttsError,
-      errorMessage: ttsError ? '译文已完成，语音暂不可用' : null,
+      errorCode: TTS_PENDING_CODE,
+      errorMessage: null,
       auth: input.request.auth,
     });
     if (!finalResult.committed) {
-      await cleanupTtsAssetBestEffort(input.request, audioUrl);
-      generatedAudioAsset = null;
       return finalResult.message;
     }
-    generatedAudioAsset = null;
     const finalMessage = finalResult.message;
     realtimeHub().emitToConversation(input.conversationId, 'translation.final', messageDto(finalMessage));
+    wakeTtsGenerationWorker();
     return finalMessage;
   } catch (error) {
-    if (generatedAudioAsset) {
-      await cleanupTtsAssetBestEffort(input.request, generatedAudioAsset);
-    }
     const failedResult = await failMessageAttempt(
       processing,
       providerError(error),
@@ -222,29 +206,6 @@ async function processMessage(input: ProcessInput) {
       });
     }
     throw failedResult.error;
-  }
-}
-
-export async function cleanupTtsAssetBestEffort(
-  request: FastifyRequest,
-  storedValue: string | null,
-): Promise<void> {
-  if (!storedValue) return;
-  try {
-    await deleteTtsAsset(storedValue);
-  } catch (cleanupError) {
-    try {
-      await enqueueAudioDeletionJobsNow([storedValue]);
-      request.log.warn(
-        { cleanupError },
-        'Queued cleanup for an uncommitted TTS asset after direct deletion failed',
-      );
-    } catch (queueError) {
-      request.log.error(
-        { cleanupError, queueError },
-        'Failed to clean or queue an uncommitted TTS asset',
-      );
-    }
   }
 }
 

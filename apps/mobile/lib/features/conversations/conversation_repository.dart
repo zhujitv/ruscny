@@ -354,6 +354,7 @@ final class ConversationRepository {
     required String path,
     required Language sourceLanguage,
     required String idempotencyKey,
+    void Function()? onUploaded,
   }) async {
     // Keep scalar fields before the stream-backed file. Fastify's
     // request.file() can only expose multipart fields that the parser has
@@ -369,6 +370,7 @@ final class ConversationRepository {
           await MultipartFile.fromFile(path, filename: '$idempotencyKey.m4a'),
         ),
       );
+    var uploadReported = false;
     return _api.postMap(
       '/conversations/${Uri.encodeComponent(conversationId)}/audio',
       data: form,
@@ -376,6 +378,12 @@ final class ConversationRepository {
         headers: {'Idempotency-Key': idempotencyKey},
         contentType: 'multipart/form-data',
       ),
+      onSendProgress: (sent, total) {
+        if (!uploadReported && total > 0 && sent >= total) {
+          uploadReported = true;
+          onUploaded?.call();
+        }
+      },
     );
   }
 

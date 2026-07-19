@@ -6,7 +6,7 @@ final class AudioPlaybackQueue {
   AudioPlaybackQueue({
     AudioPlayer? player,
     Future<String?> Function()? accessToken,
-  })  : _player = player ?? AudioPlayer(),
+  })  : _player = player ?? AudioPlayer(useProxyForRequestHeaders: false),
         _accessToken = accessToken;
 
   final AudioPlayer _player;

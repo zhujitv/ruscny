@@ -174,10 +174,15 @@ final class ApiClient {
     String path, {
     Object? data,
     Options? options,
+    ProgressCallback? onSendProgress,
   }) async {
     try {
-      final response =
-          await _dio.post<dynamic>(path, data: data, options: options);
+      final response = await _dio.post<dynamic>(
+        path,
+        data: data,
+        options: options,
+        onSendProgress: onSendProgress,
+      );
       return unwrapMap(response.data);
     } on DioException catch (error) {
       throw _readError(error);
