@@ -163,8 +163,15 @@ describe('meeting summary provider', () => {
     const provider = providerReturning({
       ...validGenerated(),
       summarySourceSequences: ['1', 2, 2],
+      partyViews: [{
+        participantId: 'participant-zh',
+        view: '确认八月十日交货。',
+      }],
       confirmedItems: null,
-      openQuestions: undefined,
+      openQuestions: [{
+        question: '规格书是否可以明天提供？',
+        sourceSequences: [2],
+      }],
       providerNote: 'extra model metadata',
     });
 
@@ -173,8 +180,15 @@ describe('meeting summary provider', () => {
     })).resolves.toMatchObject({
       draft: {
         summarySourceSequences: [1, 2],
+        partyViews: [{
+          participantId: 'participant-zh',
+          sourceSequences: [1],
+        }],
         confirmedItems: [],
-        openQuestions: [],
+        openQuestions: [{
+          text: '规格书是否可以明天提供？',
+          sourceSequences: [2],
+        }],
       },
     });
   });

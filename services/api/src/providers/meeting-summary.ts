@@ -200,7 +200,10 @@ export class AliyunMeetingSummaryProvider implements MeetingSummaryProvider {
     }
     let generated: GeneratedMeetingSummary;
     try {
-      generated = generatedSummarySchema.parse(JSON.parse(stripCodeFence(content)));
+      generated = generatedSummarySchema.parse(normalizeGeneratedPayload(
+        JSON.parse(stripCodeFence(content)),
+        input.messages,
+      ));
     } catch {
       throw new AppError(502, 'SUMMARY_PROVIDER_INVALID_RESPONSE', 'AI 会议纪要格式校验失败');
     }
@@ -233,6 +236,46 @@ summary 应简洁概括会议目的、主要讨论和结果，并用 summarySour
 
 function stripCodeFence(value: string): string {
   return value.replace(/^```(?:json)?\s*/i, '').replace(/\s*```$/, '').trim();
+}
+
+function normalizeGeneratedPayload(
+  value: unknown,
+  messages: SummaryTranscriptMessage[],
+): unknown {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return value;
+  const payload = value as Record<string, unknown>;
+  const objects = (items: unknown) => Array.isArray(items)
+    ? items.filter((item): item is Record<string, unknown> =>
+        Boolean(item) && typeof item === 'object' && !Array.isArray(item))
+    : items;
+  const withTextAlias = (
+    items: unknown,
+    aliases: string[],
+  ): unknown => {
+    const rows = objects(items);
+    if (!Array.isArray(rows)) return rows;
+    return rows.map((item) => ({
+      ...item,
+      text: item.text ?? aliases.map((alias) => item[alias]).find(
+        (candidate) => typeof candidate === 'string' && candidate.trim().length > 0,
+      ),
+    }));
+  };
+  const partyViews = objects(payload.partyViews);
+  return {
+    ...payload,
+    partyViews: Array.isArray(partyViews)
+      ? partyViews.map((view) => ({
+          ...view,
+          sourceSequences: view.sourceSequences ?? messages
+            .filter((message) => message.participantId === view.participantId)
+            .map((message) => message.sequence),
+        }))
+      : partyViews,
+    confirmedItems: withTextAlias(payload.confirmedItems, ['item', 'decision']),
+    actionItems: withTextAlias(payload.actionItems, ['action', 'task']),
+    openQuestions: withTextAlias(payload.openQuestions, ['question']),
+  };
 }
 
 /**
