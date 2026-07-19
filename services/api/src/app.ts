@@ -12,6 +12,7 @@ import { AppError } from './errors.js';
 import { attachRealtime } from './realtime.js';
 import { realtimeHub } from './realtime-hub.js';
 import { registerAdminRoutes } from './routes/admin.js';
+import { registerAdminBusinessRoutes } from './routes/admin-business.js';
 import { registerAdminWebRoutes } from './routes/admin-web.js';
 import { registerCustomerWebRoutes } from './routes/customer-web.js';
 import { registerAuthRoutes } from './routes/auth.js';
@@ -144,6 +145,7 @@ export async function buildApp(options: BuildOptions = {}): Promise<FastifyInsta
   await registerAdminWebRoutes(app);
   await registerAuthRoutes(app);
   await registerAdminRoutes(app);
+  await registerAdminBusinessRoutes(app);
   await registerAudioAssetRoutes(app);
   await registerContactRoutes(app);
   await registerConversationRoutes(app);

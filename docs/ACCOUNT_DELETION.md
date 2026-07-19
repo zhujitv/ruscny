@@ -71,7 +71,7 @@ Content-Type: application/json
 - Guest 只撤销当前 scoped GuestIdentity，不会把其 GuestPrincipal 在其他会议中全局封禁。
 - 成功提交后 API 广播该用户所拥有会议的结束事件，并断开注销主体的 Socket。
 
-账号注销路径不删除作为共享会议记录一部分的 TTS 引用，避免因某一参会者注销破坏其他参会者的完整历史。该路径仍不是可查询的完整跨存储 deletion request；Redis、第三方和备份传播仍需独立 `deletionRequestId` 与可查询状态。
+账号注销路径不删除作为共享会议记录一部分的 TTS 引用，避免因某一参会者注销破坏其他参会者的完整历史。系统现在会写入可查询的 `DataDeletionRequest` 在线删除台账，记录数据库匿名化、设备撤销和共享记录处理状态；Redis、第三方和备份传播仍需继续补充执行器与独立完成证据，不能因为台账显示在线步骤完成就宣称全副本删除完成。
 
 安全要求：
 

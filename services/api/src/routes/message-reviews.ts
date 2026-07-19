@@ -35,6 +35,7 @@ import {
   enqueueAudioDeletionJobsNow,
   wakeAudioDeletionWorker,
 } from '../services/audio-deletion-outbox.js';
+import { systemSetting } from '../services/system-settings.js';
 
 const idempotencyKeySchema = z.string().min(8).max(200);
 const reviewTextSchema = z.string().trim().min(1).max(5_000);
@@ -103,6 +104,12 @@ interface ProposalResult {
 
 export async function registerMessageReviewRoutes(app: FastifyInstance): Promise<void> {
   const authenticated = { preHandler: authenticate };
+  const reviewMutation = { preHandler: async (request: FastifyRequest) => {
+    await authenticate(request);
+    if (!await systemSetting('QUALITY_REVIEW_ENABLED')) {
+      throw forbidden('QUALITY_REVIEW_DISABLED', '系统暂时关闭翻译纠错');
+    }
+  } };
 
   app.get(
     '/v1/conversations/:conversationId/messages/:messageId/corrections',
@@ -143,7 +150,7 @@ export async function registerMessageReviewRoutes(app: FastifyInstance): Promise
 
   app.post(
     '/v1/conversations/:conversationId/messages/:messageId/corrections',
-    authenticated,
+    reviewMutation,
     async (request) => {
       const ids = reviewRouteIds(request.params);
       const body = manualCorrectionSchema.parse(request.body);
@@ -179,7 +186,7 @@ export async function registerMessageReviewRoutes(app: FastifyInstance): Promise
 
   app.post(
     '/v1/conversations/:conversationId/messages/:messageId/retranslate',
-    authenticated,
+    reviewMutation,
     async (request) => {
       const ids = reviewRouteIds(request.params);
       const body = retranslateSchema.parse(request.body);
@@ -233,7 +240,7 @@ export async function registerMessageReviewRoutes(app: FastifyInstance): Promise
 
   app.post(
     '/v1/conversations/:conversationId/messages/:messageId/review/confirm',
-    authenticated,
+    reviewMutation,
     async (request) => {
       const ids = reviewRouteIds(request.params);
       const body = decisionSchema.parse(request.body);
@@ -250,7 +257,7 @@ export async function registerMessageReviewRoutes(app: FastifyInstance): Promise
 
   app.post(
     '/v1/conversations/:conversationId/messages/:messageId/review/reject',
-    authenticated,
+    reviewMutation,
     async (request) => {
       const ids = reviewRouteIds(request.params);
       const body = decisionSchema.parse(request.body);
@@ -267,7 +274,7 @@ export async function registerMessageReviewRoutes(app: FastifyInstance): Promise
 
   app.post(
     '/v1/conversations/:conversationId/messages/:messageId/glossary',
-    authenticated,
+    reviewMutation,
     async (request) => {
       const ids = reviewRouteIds(request.params);
       const body = glossarySchema.parse(request.body);

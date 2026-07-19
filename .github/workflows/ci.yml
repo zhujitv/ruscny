@@ -47,7 +47,7 @@ jobs:
       JWT_REFRESH_SECRET: ci-refresh-secret-at-least-32-characters
       PASSWORD_PEPPER: ci-password-pepper-at-least-32-characters
       TRANSLATION_PROVIDER: mock
-      PUBLIC_APP_URL: https://translate.example.com
+      PUBLIC_APP_URL: https://www.ruscny.net
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4

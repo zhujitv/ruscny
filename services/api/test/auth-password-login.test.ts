@@ -23,6 +23,7 @@ const mocks = vi.hoisted(() => {
         updateMany: vi.fn(),
       },
       glossaryTerm: { createMany: vi.fn() },
+      systemSetting: { findUnique: vi.fn() },
     },
   };
 });
@@ -57,6 +58,7 @@ beforeEach(() => {
   mocks.transaction.$queryRaw.mockResolvedValue([{ status: 'ACTIVE' }]);
   mocks.transaction.userDevice.upsert.mockResolvedValue({});
   mocks.prisma.user.updateMany.mockResolvedValue({ count: 1 });
+  mocks.prisma.systemSetting.findUnique.mockResolvedValue(null);
 });
 
 afterEach(async () => {
@@ -78,6 +80,15 @@ async function createApp(): Promise<FastifyInstance> {
 }
 
 describe('password login hardening', () => {
+  it('blocks registration when the safe operational switch is disabled', async () => {
+    mocks.prisma.systemSetting.findUnique.mockResolvedValue({ value: false });
+    app = await createApp();
+    const response = await app.inject({ method: 'POST', url: '/v1/auth/register', payload: { displayName: 'Alice', email: 'alice@example.test', password: 'password-123', deviceId: 'register-device-a' } });
+    expect(response.statusCode).toBe(403);
+    expect(response.json().code).toBe('REGISTRATION_DISABLED');
+    expect(mocks.prisma.user.create).not.toHaveBeenCalled();
+  });
+
   it('creates one unified registered-user type even when an old client submits a role', async () => {
     mocks.prisma.user.findUnique.mockResolvedValue(null);
     mocks.prisma.user.create.mockResolvedValue({

@@ -45,6 +45,11 @@ vi.mock('../src/admin-auth.js', () => ({
       sessionId: 'admin-session',
     };
   }),
+  requireAdminCapability: vi.fn(async (request) => {
+    request.auth = {
+      subjectId: 'admin-a', role: 'USER', deviceId: 'admin-device', sessionId: 'admin-session',
+    };
+  }),
 }));
 vi.mock('../src/db.js', () => ({ prisma: mocks.prisma }));
 vi.mock('../src/realtime-hub.js', () => ({
@@ -200,5 +205,44 @@ describe('server administrator writes', () => {
       'room.ended',
       expect.objectContaining({ conversationId: 'conversation-a' }),
     );
+  });
+});
+
+describe('server administrator operations queries', () => {
+  it('paginates failed translations without exposing message content', async () => {
+    mocks.prisma.translationMessage.findMany.mockResolvedValue([{
+      id: 'message-a', conversationId: 'conversation-a', sequence: 7,
+      provider: 'aliyun', errorCode: 'MT_TIMEOUT', errorMessage: 'provider timeout',
+      createdAt: new Date('2026-07-19T08:00:00Z'), updatedAt: new Date('2026-07-19T08:01:00Z'),
+    }]);
+    mocks.prisma.translationMessage.count.mockResolvedValue(1);
+
+    const response = await app!.inject({
+      method: 'GET',
+      url: '/v1/admin/failures?q=timeout&provider=ali&page=1&pageSize=10',
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data).toMatchObject({ total: 1, totalPages: 1 });
+    expect(mocks.prisma.translationMessage.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ status: 'FAILED' }),
+      take: 10,
+      select: expect.not.objectContaining({ sourceText: true, translatedText: true }),
+    }));
+  });
+
+  it('filters the audit trail by free text and target type', async () => {
+    mocks.prisma.adminAuditLog.findMany.mockResolvedValue([]);
+    mocks.prisma.adminAuditLog.count.mockResolvedValue(0);
+
+    const response = await app!.inject({
+      method: 'GET',
+      url: '/v1/admin/audit-logs?q=marc&targetType=USER',
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(mocks.prisma.adminAuditLog.findMany).toHaveBeenCalledWith(expect.objectContaining({
+      where: expect.objectContaining({ targetType: 'USER', OR: expect.any(Array) }),
+    }));
   });
 });

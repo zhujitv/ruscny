@@ -4,6 +4,7 @@ import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { authenticate } from '../auth.js';
 import { config } from '../config.js';
+import { systemSetting } from '../services/system-settings.js';
 import { prisma } from '../db.js';
 import { AppError, conflict, forbidden, unauthorized } from '../errors.js';
 import { randomToken, safeEqual, secretHash } from '../lib/crypto.js';
@@ -131,6 +132,9 @@ async function issueUserSession(user: {
 
 export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
   app.post('/v1/auth/register', { config: { rateLimit: { max: 20, timeWindow: '1 minute' } } }, async (request) => {
+    if (!await systemSetting('REGISTRATION_ENABLED')) {
+      throw forbidden('REGISTRATION_DISABLED', '系统暂时关闭新用户注册');
+    }
     const body = credentials
       .extend({
         displayName: safeIdentityText(1, 100),
@@ -846,6 +850,15 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
             lastSeenAt: deletedAt,
           },
         });
+        await tx.dataDeletionRequest.upsert({
+          where: { subjectType_subjectId: { subjectType: 'GUEST', subjectId: guestIdentityId } },
+          create: {
+            subjectType: 'GUEST', subjectId: guestIdentityId, status: 'COMPLETED',
+            steps: { database: 'COMPLETED', identity: 'ANONYMIZED', externalAssets: 'NOT_APPLICABLE' },
+            requestedAt: deletedAt, completedAt: deletedAt,
+          },
+          update: { status: 'COMPLETED', completedAt: deletedAt },
+        });
         return [];
       }
 
@@ -1010,6 +1023,15 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
           refreshTokenHash: null,
           refreshTokenJti: null,
         },
+      });
+      await tx.dataDeletionRequest.upsert({
+        where: { subjectType_subjectId: { subjectType: 'USER', subjectId: request.auth.subjectId } },
+        create: {
+          subjectType: 'USER', subjectId: request.auth.subjectId, status: 'COMPLETED',
+          steps: { database: 'COMPLETED', identity: 'ANONYMIZED', devices: 'REVOKED', sharedRecords: 'RETAINED_ANONYMIZED' },
+          requestedAt: deletedAt, completedAt: deletedAt,
+        },
+        update: { status: 'COMPLETED', completedAt: deletedAt },
       });
       return ownedActive.map((conversation) => conversation.id);
     }, { maxWait: 10_000, timeout: 60_000 });

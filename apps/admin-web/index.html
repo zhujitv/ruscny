@@ -51,6 +51,15 @@
         <button class="nav-button active" data-view="overview"><span>◫</span><span data-i18n="overview">概览</span></button>
         <button class="nav-button" data-view="users"><span>◎</span><span data-i18n="users">用户管理</span></button>
         <button class="nav-button" data-view="conversations"><span>◉</span><span data-i18n="meetings">会议管理</span></button>
+        <button class="nav-button" data-view="failures"><span>!</span><span data-i18n="failures">故障中心</span></button>
+        <button class="nav-button" data-view="health"><span>⌁</span><span data-i18n="health">系统健康</span></button>
+        <button class="nav-button" data-view="tasks"><span>↻</span><span data-i18n="tasks">任务队列</span></button>
+        <button class="nav-button" data-view="admins"><span>♙</span><span data-i18n="adminRoles">管理员权限</span></button>
+        <button class="nav-button" data-view="email"><span>✉</span><span data-i18n="emailCenter">邮件通知</span></button>
+        <button class="nav-button" data-view="glossary"><span>文</span><span data-i18n="glossaryCenter">公共术语</span></button>
+        <button class="nav-button" data-view="quality"><span>✓</span><span data-i18n="qualityCenter">翻译质量</span></button>
+        <button class="nav-button" data-view="governance"><span>◇</span><span data-i18n="dataGovernance">数据治理</span></button>
+        <button class="nav-button" data-view="settings"><span>⚙</span><span data-i18n="settings">系统配置</span></button>
         <button class="nav-button" data-view="audit"><span>≋</span><span data-i18n="audit">审计记录</span></button>
       </nav>
       <div class="sidebar-footer">
@@ -94,6 +103,42 @@
           </section>
         </div>
       </section>
+
+      <section id="view-health" class="view-panel hidden">
+        <div id="healthCards" class="metric-grid"></div>
+        <section class="panel panel-spaced">
+          <div class="panel-heading"><div><p class="eyebrow">RUNTIME</p><h2 data-i18n="runtimeDetails">运行详情</h2></div></div>
+          <div id="healthDetails" class="detail-grid panel-content"></div>
+        </section>
+      </section>
+
+      <section id="view-tasks" class="view-panel hidden">
+        <section class="panel">
+          <form id="taskFilters" class="filters">
+            <div></div><select id="taskType"><option value="" data-i18n="allTasks">全部任务</option><option value="AUDIO_DELETION" data-i18n="audioDeletion">音频清理</option><option value="SUMMARY_EMAIL" data-i18n="summaryEmail">纪要邮件</option></select><button class="primary" type="submit" data-i18n="search">查询</button>
+          </form>
+          <div class="table-wrap"><table><thead><tr><th data-i18n="time">时间</th><th data-i18n="taskType">任务类型</th><th data-i18n="status">状态</th><th data-i18n="attempts">尝试次数</th><th data-i18n="details">详情</th><th data-i18n="actions">操作</th></tr></thead><tbody id="tasksBody"></tbody></table></div>
+          <div id="tasksPagination" class="pagination"></div>
+        </section>
+      </section>
+
+      <section id="view-admins" class="view-panel hidden">
+        <section class="panel">
+          <div class="panel-heading"><div><p class="eyebrow">RBAC</p><h2 data-i18n="adminRoleManagement">管理员职责分级</h2></div></div>
+          <p class="panel-note" data-i18n="adminRoleHint">这里只调整已有管理员职责，不能把普通用户提升为管理员。</p>
+          <div class="table-wrap"><table><thead><tr><th data-i18n="identity">管理员</th><th data-i18n="adminRole">职责</th><th data-i18n="status">状态</th><th data-i18n="createdAt">创建时间</th><th data-i18n="actions">操作</th></tr></thead><tbody id="adminsBody"></tbody></table></div>
+        </section>
+      </section>
+
+      <section id="view-email" class="view-panel hidden"><section class="panel"><form id="emailFilters" class="filters"><input id="emailSearch" type="search" data-i18n-placeholder="searchEmail" placeholder="搜索任务或会议 ID"><select id="emailStatus"><option value="" data-i18n="allStatuses">全部状态</option><option>PROCESSING</option><option>COMPLETED</option><option>PARTIAL_FAILURE</option><option>FAILED</option></select><button class="primary" data-i18n="search">查询</button></form><div class="table-wrap"><table><thead><tr><th data-i18n="time">时间</th><th data-i18n="meeting">会议</th><th data-i18n="status">状态</th><th data-i18n="recipients">收件人</th><th data-i18n="delivery">发送结果</th><th data-i18n="actions">操作</th></tr></thead><tbody id="emailBody"></tbody></table></div><div id="emailPagination" class="pagination"></div></section></section>
+
+      <section id="view-glossary" class="view-panel hidden"><section class="panel"><form id="glossaryFilters" class="filters"><input id="glossarySearch" type="search" data-i18n-placeholder="searchGlossary" placeholder="搜索原词、译词或分类"><select id="glossaryDirection"><option value="" data-i18n="allDirections">全部方向</option><option value="zh:ru">中文 → 俄语</option><option value="ru:zh">Русский → 中文</option></select><button class="primary" data-i18n="search">查询</button></form><div class="panel-heading"><span data-i18n="globalTermsHint">公共术语应用于所有用户，用户私人术语优先。</span><button id="addGlossaryButton" class="primary" type="button" data-i18n="addTerm">新增术语</button></div><div class="table-wrap"><table><thead><tr><th data-i18n="direction">方向</th><th data-i18n="sourceTerm">原词</th><th data-i18n="targetTerm">译词</th><th data-i18n="category">分类</th><th data-i18n="status">状态</th><th data-i18n="actions">操作</th></tr></thead><tbody id="glossaryBody"></tbody></table></div><div id="glossaryPagination" class="pagination"></div></section></section>
+
+      <section id="view-quality" class="view-panel hidden"><section class="panel"><form id="qualityFilters" class="filters"><div></div><select id="qualityStatus"><option value="" data-i18n="allStatuses">全部状态</option><option>PENDING</option><option>CONFIRMED</option><option>REJECTED</option></select><button class="primary" data-i18n="search">查询</button></form><div class="table-wrap"><table><thead><tr><th data-i18n="time">时间</th><th data-i18n="meeting">会议</th><th data-i18n="correctionType">类型</th><th data-i18n="operator">提交人</th><th data-i18n="status">状态</th><th data-i18n="actions">操作</th></tr></thead><tbody id="qualityBody"></tbody></table></div><div id="qualityPagination" class="pagination"></div></section></section>
+
+      <section id="view-governance" class="view-panel hidden"><div id="governanceCards" class="metric-grid"></div><section class="panel panel-spaced"><form id="governanceFilters" class="filters"><div></div><select id="governanceStatus"><option value="" data-i18n="allStatuses">全部状态</option><option>PENDING</option><option>IN_PROGRESS</option><option>COMPLETED</option><option>PARTIAL_FAILURE</option></select><button class="primary" data-i18n="search">查询</button></form><div class="table-wrap"><table><thead><tr><th data-i18n="time">时间</th><th data-i18n="subject">数据主体</th><th data-i18n="status">状态</th><th data-i18n="steps">处理步骤</th><th data-i18n="details">详情</th></tr></thead><tbody id="governanceBody"></tbody></table></div><div id="governancePagination" class="pagination"></div></section></section>
+
+      <section id="view-settings" class="view-panel hidden"><section class="panel"><div class="panel-heading"><div><p class="eyebrow">SAFE SETTINGS</p><h2 data-i18n="businessSettings">业务配置</h2></div></div><p class="panel-note" data-i18n="settingsHint">这里只提供安全业务开关，不显示任何密钥或数据库地址。</p><div id="settingsList" class="settings-list"></div></section></section>
 
       <section id="view-users" class="view-panel hidden">
         <section class="panel">
@@ -146,9 +191,31 @@
         </section>
       </section>
 
+      <section id="view-failures" class="view-panel hidden">
+        <section class="panel">
+          <form id="failureFilters" class="filters filters-wide">
+            <input id="failureSearch" type="search" maxlength="200" data-i18n-placeholder="searchFailures" placeholder="搜索错误码、服务商、会议或消息 ID">
+            <input id="failureProvider" type="search" maxlength="100" data-i18n-placeholder="providerFilter" placeholder="服务商">
+            <button class="primary" type="submit" data-i18n="search">查询</button>
+          </form>
+          <div class="table-wrap">
+            <table>
+              <thead><tr><th data-i18n="time">时间</th><th data-i18n="errorCode">错误码</th><th data-i18n="provider">服务商</th><th data-i18n="meeting">会议</th><th data-i18n="message">消息</th><th data-i18n="details">详情</th><th data-i18n="actions">操作</th></tr></thead>
+              <tbody id="failuresBody"></tbody>
+            </table>
+          </div>
+          <div id="failuresPagination" class="pagination"></div>
+        </section>
+      </section>
+
       <section id="view-audit" class="view-panel hidden">
         <section class="panel">
           <div class="panel-heading"><div><p class="eyebrow" data-i18n="immutableTrail">IMMUTABLE TRAIL</p><h2 data-i18n="privilegedActions">管理操作记录</h2></div></div>
+          <form id="auditFilters" class="filters filters-wide">
+            <input id="auditSearch" type="search" maxlength="200" data-i18n-placeholder="searchAudit" placeholder="搜索动作、对象、操作人或 ID">
+            <select id="auditTargetType"><option value="" data-i18n="allTargets">全部对象</option><option value="USER" data-i18n="users">用户</option><option value="CONVERSATION" data-i18n="meetings">会议</option></select>
+            <button class="primary" type="submit" data-i18n="search">查询</button>
+          </form>
           <div class="table-wrap">
             <table>
               <thead><tr><th data-i18n="time">时间</th><th data-i18n="operator">操作人</th><th data-i18n="action">动作</th><th data-i18n="target">对象</th><th data-i18n="details">详情</th></tr></thead>

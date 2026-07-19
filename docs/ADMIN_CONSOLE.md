@@ -1,6 +1,6 @@
 # 服务器管理后台
 
-管理后台由 API 服务同源提供，正式地址为 `https://www.ruscny.net/admin`。界面支持中文和俄文，可查看概览、翻译用量/失败、用户、会议、参会人员与管理审计记录。
+管理后台由 API 服务同源提供，正式地址为 `https://www.ruscny.net/admin`。界面支持中文和俄文，可查看概览、翻译用量、用户与设备会话、会议与参会人员、可分页检索的翻译故障，以及可筛选的管理审计记录。
 
 ## 1. 权限边界
 
@@ -33,7 +33,19 @@
 | `POST /v1/admin/users/:id/password-reset` | 签发一次性重置凭证和带 URL fragment 的链接 |
 | `GET /v1/admin/conversations` / `GET /v1/admin/conversations/:id` | 搜索会议，查看参会人员和消息状态计数，默认不暴露会议正文 |
 | `POST /v1/admin/conversations/:id/end` | 事务化结束会议、失败化处理中消息、终止参会/邀请并广播 `room.ended` |
-| `GET /v1/admin/audit-logs` | 分页查看管理写操作审计记录 |
+| `GET /v1/admin/failures` | 按关键词/服务商分页检索失败翻译，仅返回故障元数据，不返回会议正文 |
+| `POST /v1/admin/failures/:id/retry` | 仅对有可靠原文、可恢复错误、仍有效会议和有效参会者执行安全重试 |
+| `GET /v1/admin/health` | 数据库、实时通信、供应商配置和队列积压状态 |
+| `GET /v1/admin/tasks` / `POST /v1/admin/tasks/:type/:id/retry` | 查看音频清理/纪要邮件任务并审计人工重试 |
+| `GET /v1/admin/admins` / `PATCH /v1/admin/admins/:id/role` | 查看并调整已有管理员职责，不提供普通用户提权入口 |
+| `GET /v1/admin/email/distributions` / `:id` | 邮件分发运营与脱敏收件人状态查看 |
+| `GET/POST/PATCH/DELETE /v1/admin/system-glossary` | 公共术语运营；与用户私人术语隔离，停用代替物理删除 |
+| `GET /v1/admin/quality/corrections` | 质量审核队列；列表不返回会议正文 |
+| `GET /v1/admin/quality/corrections/:id?reason=` | 填写调查原因后查看纠错差异并写入审计 |
+| `PATCH /v1/admin/quality/corrections/:id/decision` | 通过 CAS 确认或拒绝当前待审核修订 |
+| `GET/PATCH /v1/admin/governance/deletions` | 删除台账、匿名化步骤及跨存储异常状态 |
+| `GET/PATCH /v1/admin/settings` | 仅管理注册和质量审核等已接入业务流程的安全开关 |
+| `GET /v1/admin/audit-logs` | 按关键词、动作、对象类型或操作人分页筛选管理写操作审计记录 |
 
 列表接口使用 `page`/`pageSize`，`pageSize` 最大 100。用户状态、强制退出、签发重置凭证和结束会议可传 `reason` 作为审计说明，最长 500 字符。
 
@@ -51,3 +63,24 @@
 `AdminAuditLog` 记录操作人、动作、对象、非敏感 metadata、请求 ID、IP 和时间。它不得保存密码、Bearer/Refresh Token、重置 Token 或会议正文。管理写操作与业务变更放在同一 PostgreSQL 事务。
 
 后台的“错误”当前是 PostgreSQL 中持久化的翻译消息失败。HTTP 5xx、进程崩溃、Redis/PostgreSQL/对象存储资源指标仍由生产日志、APM 和云平台告警承担；不应为了管理界面而在业务库中记录可能含敏感请求体的全量错误。
+
+## 6. 管理员职责
+
+| 职责 | 能力 |
+|---|---|
+| `SUPER_ADMIN` | 全部后台能力和已有管理员职责调整 |
+| `OPERATIONS` | 用户/会议运营、故障与任务重试、审计查看 |
+| `SUPPORT` | 用户与会议客服操作 |
+| `QUALITY` | 翻译故障调查和安全重试 |
+| `AUDITOR` | 只读运营状态和完整审计 |
+| `VIEWER` | 只读运营数据 |
+
+职责只作用于已经具有 `isSystemAdmin=true` 的账号。后台不提供普通用户提权入口；初始提权仍由受控运维流程完成。当前超级管理员不能降低自己的职责，防止误操作导致后台失去控制。
+
+## 7. 第二阶段业务运营边界
+
+- 邮件中心仅展示脱敏邮箱，不允许输入任意收件人进行群发。
+- 公共术语存入独立 `SystemGlossaryTerm`；用户 `GlossaryTerm` 仍为私人数据，后台不浏览和改写。匹配冲突时用户私人术语优先。
+- 质量列表只返回纠错人、类型、状态和时间。打开原文/译文差异必须填写调查原因，并写 `QUALITY_CONTENT_VIEWED` 审计。
+- 删除台账证明在线数据库匿名化步骤，不代表 Redis、第三方供应商和历史备份已全部完成删除；这些步骤可以标记部分失败并持续跟踪。
+- 系统配置采用版本号比较更新。后台永远不返回或修改数据库密码、JWT Secret、供应商 API Key、对象存储密钥等机密。

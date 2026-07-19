@@ -20,6 +20,7 @@ const mocks = vi.hoisted(() => {
     glossaryTerm: { deleteMany: vi.fn() },
     userDevice: { updateMany: vi.fn() },
     user: { updateMany: vi.fn() },
+    dataDeletionRequest: { upsert: vi.fn() },
   };
   return {
     state,
@@ -30,6 +31,7 @@ const mocks = vi.hoisted(() => {
       $transaction: vi.fn(async (callback: (tx: typeof transaction) => unknown) =>
         callback(transaction)),
       user: { findUnique: vi.fn(), update: vi.fn() },
+      systemSetting: { findUnique: vi.fn() },
     },
   };
 });
@@ -88,6 +90,8 @@ beforeEach(() => {
   mocks.transaction.user.updateMany.mockResolvedValue({ count: 1 });
   mocks.transaction.conversation.updateMany.mockResolvedValue({ count: 1 });
   mocks.transaction.guestIdentity.updateMany.mockResolvedValue({ count: 1 });
+  mocks.transaction.dataDeletionRequest.upsert.mockResolvedValue({ id: 'deletion-a' });
+  mocks.prisma.systemSetting.findUnique.mockResolvedValue(null);
 });
 
 afterEach(async () => {

@@ -706,6 +706,26 @@ POST  /v1/admin/users/:id/password-reset
 GET   /v1/admin/conversations?page=1&pageSize=25&q=&status=
 GET   /v1/admin/conversations/:id
 POST  /v1/admin/conversations/:id/end
+GET   /v1/admin/failures?page=1&pageSize=25&q=&provider=
+POST  /v1/admin/failures/:id/retry
+GET   /v1/admin/health
+GET   /v1/admin/tasks?page=1&pageSize=25&type=
+POST  /v1/admin/tasks/:type/:id/retry
+GET   /v1/admin/admins
+PATCH /v1/admin/admins/:id/role
+GET   /v1/admin/email/distributions
+GET   /v1/admin/email/distributions/:id
+GET   /v1/admin/system-glossary
+POST  /v1/admin/system-glossary
+PATCH /v1/admin/system-glossary/:id
+DELETE /v1/admin/system-glossary/:id
+GET   /v1/admin/quality/corrections
+GET   /v1/admin/quality/corrections/:id?reason=
+PATCH /v1/admin/quality/corrections/:id/decision
+GET   /v1/admin/governance/deletions
+PATCH /v1/admin/governance/deletions/:id
+GET   /v1/admin/settings
+PATCH /v1/admin/settings/:key
 GET   /v1/admin/audit-logs?page=1&pageSize=25
 POST  /v1/auth/password/reset
 ```

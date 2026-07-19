@@ -14,6 +14,7 @@ import {
   configuredSystemAdminUserIds,
   isSystemAdminRecord,
   requireSystemAdmin,
+  requireAdminCapability,
 } from '../src/admin-auth.js';
 
 beforeEach(() => vi.clearAllMocks());
@@ -80,5 +81,30 @@ describe('system administrator authorization', () => {
     });
     await expect(requireSystemAdmin({} as never, {} as never)).resolves.toBeUndefined();
     expect(mocks.findUnique).toHaveBeenCalledTimes(2);
+  });
+
+  it('enforces role capabilities for privileged operations', async () => {
+    mocks.authenticate.mockImplementation(async (request) => {
+      request.auth = { subjectId: 'viewer-a', role: 'USER' };
+    });
+    mocks.findUnique.mockResolvedValue({
+      id: 'viewer-a', status: 'ACTIVE', isSystemAdmin: true, adminRole: 'VIEWER',
+    });
+    await expect(requireAdminCapability({} as never, {} as never, 'READ_OPERATIONS')).resolves.toBeUndefined();
+    await expect(requireAdminCapability({} as never, {} as never, 'MANAGE_USERS')).rejects.toMatchObject({
+      code: 'ADMIN_PERMISSION_REQUIRED',
+    });
+  });
+
+  it('fails closed when a durable administrator has no assigned role', async () => {
+    mocks.authenticate.mockImplementation(async (request) => {
+      request.auth = { subjectId: 'unassigned-a', role: 'USER' };
+    });
+    mocks.findUnique.mockResolvedValue({
+      id: 'unassigned-a', status: 'ACTIVE', isSystemAdmin: true, adminRole: null,
+    });
+    await expect(requireAdminCapability({} as never, {} as never, 'READ_OPERATIONS')).rejects.toMatchObject({
+      code: 'ADMIN_ROLE_REQUIRED',
+    });
   });
 });

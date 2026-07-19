@@ -11,6 +11,22 @@ enum UserRole {
   USER
 }
 
+enum SystemAdminRole {
+  SUPER_ADMIN
+  OPERATIONS
+  SUPPORT
+  QUALITY
+  AUDITOR
+  VIEWER
+}
+
+enum DataDeletionStatus {
+  PENDING
+  IN_PROGRESS
+  COMPLETED
+  PARTIAL_FAILURE
+}
+
 enum UserStatus {
   ACTIVE
   DISABLED
@@ -117,6 +133,7 @@ model User {
   id                         String              @id @default(cuid())
   role                       UserRole
   isSystemAdmin              Boolean             @default(false)
+  adminRole                  SystemAdminRole?
   displayName                String
   company                    String?
   preferredLanguage          Language            @default(zh)
@@ -367,6 +384,46 @@ model GlossaryTerm {
 
   @@unique([ownerId, sourceLanguage, targetLanguage, sourceTerm])
   @@index([ownerId, enabled])
+}
+
+model SystemGlossaryTerm {
+  id             String   @id @default(cuid())
+  sourceLanguage Language
+  targetLanguage Language
+  sourceTerm     String
+  targetTerm     String
+  category       String?
+  enabled        Boolean  @default(true)
+  createdById    String
+  updatedById    String
+  createdAt      DateTime @default(now())
+  updatedAt      DateTime @updatedAt
+
+  @@unique([sourceLanguage, targetLanguage, sourceTerm])
+  @@index([enabled, sourceLanguage, targetLanguage])
+}
+
+model SystemSetting {
+  key         String   @id
+  value       Json
+  version     Int      @default(1)
+  updatedById String
+  updatedAt   DateTime @updatedAt
+}
+
+model DataDeletionRequest {
+  id          String             @id @default(cuid())
+  subjectType String
+  subjectId   String
+  status      DataDeletionStatus @default(PENDING)
+  steps       Json               @default("{}")
+  lastError   String?
+  requestedAt DateTime           @default(now())
+  completedAt DateTime?
+  updatedAt   DateTime           @updatedAt
+
+  @@unique([subjectType, subjectId])
+  @@index([status, requestedAt])
 }
 
 model ConversationSummary {

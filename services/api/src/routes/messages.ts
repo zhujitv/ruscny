@@ -816,16 +816,18 @@ async function glossaryTerms(
   targetLanguage: SpeechLanguage,
   sourceText: string,
 ): Promise<TranslationTerm[]> {
-  const rows = await prisma.glossaryTerm.findMany({
-    where: {
-      ownerId,
-      sourceLanguage: { in: [sourceLanguage, 'en'] },
-      targetLanguage,
-      enabled: true,
-    },
-    orderBy: { sourceTerm: 'asc' },
-    take: 500,
-  });
+  const [privateRows, systemRows] = await Promise.all([
+    prisma.glossaryTerm.findMany({
+      where: { ownerId, sourceLanguage: { in: [sourceLanguage, 'en'] }, targetLanguage, enabled: true },
+      orderBy: { sourceTerm: 'asc' }, take: 500,
+    }),
+    prisma.systemGlossaryTerm.findMany({
+      where: { sourceLanguage: { in: [sourceLanguage, 'en'] }, targetLanguage, enabled: true },
+      orderBy: { sourceTerm: 'asc' }, take: 500,
+    }),
+  ]);
+  // Private owner terms override global operational terminology.
+  const rows = [...privateRows, ...systemRows];
   const normalized = sourceText.toLocaleLowerCase();
   const matched = rows
     .filter((row) => normalized.includes(row.sourceTerm.toLocaleLowerCase()))
