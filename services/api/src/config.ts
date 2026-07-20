@@ -47,6 +47,12 @@ const schema = z.object({
   ACCESS_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(900),
   REFRESH_TOKEN_TTL_SECONDS: z.coerce.number().int().positive().default(2_592_000),
   PASSWORD_PEPPER: z.string().min(16).default('development-password-pepper-change-me'),
+  // Bootstrap key used only to encrypt service credentials stored by the
+  // administrator. It must stay in the deployment secret store and is never
+  // exposed through the admin API.
+  SERVICE_CONFIG_MASTER_KEY: optionalSecret,
+  SERVICE_CONFIG_PREVIOUS_MASTER_KEYS: optionalString,
+  SERVICE_CONFIG_ALLOWED_HOSTS: z.string().default(''),
   // Bootstrap access is bound to immutable User ids, never to reusable email
   // addresses. Database isSystemAdmin remains the preferred durable capability.
   SYSTEM_ADMIN_USER_IDS: z.string().default(''),
@@ -98,6 +104,15 @@ const schema = z.object({
   S3_ACCESS_KEY_ID: optionalString,
   S3_SECRET_ACCESS_KEY: optionalString,
   S3_FORCE_PATH_STYLE: booleanString,
+  ALIYUN_RTC_APP_ID: optionalString,
+  ALIYUN_RTC_APP_KEY: optionalString,
+  ALIYUN_RTC_TOKEN_TTL_SECONDS: z.coerce.number().int().min(300).max(86_400).default(3_600),
+  ALIYUN_REALTIME_WORKSPACE_ID: optionalString,
+  ALIYUN_REALTIME_API_KEY: optionalString,
+  ALIYUN_REALTIME_TRANSLATION_ENABLED: booleanString,
+  ALIYUN_REALTIME_WEBSOCKET_URL: z.string().url().default('wss://cn-beijing.maas.aliyuncs.com/api-ws/v1/realtime'),
+  ALIYUN_REALTIME_TRANSLATION_MODEL: z.string().default('qwen3.5-livetranslate-flash-realtime'),
+  ALIYUN_REALTIME_MAX_SESSION_SECONDS: z.coerce.number().int().min(300).max(7_200).default(3_600),
 });
 
 export type AppConfig = z.infer<typeof schema>;
@@ -111,6 +126,9 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
       parsed.PASSWORD_PEPPER,
     ].some((value) => value.startsWith('development-'));
     if (unsafe) throw new Error('Production authentication secrets are not configured');
+    if (!parsed.SERVICE_CONFIG_MASTER_KEY) {
+      throw new Error('SERVICE_CONFIG_MASTER_KEY is required in production');
+    }
     if (!hasSecurePostgresTransport(parsed.DATABASE_URL)) {
       throw new Error('Production DATABASE_URL must require TLS with sslmode=require or verify');
     }
@@ -123,35 +141,14 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
     if (parsed.TRANSLATION_PROVIDER !== 'aliyun') {
       throw new Error('Production requires TRANSLATION_PROVIDER=aliyun');
     }
-    if (parsed.TRANSLATION_PROVIDER === 'aliyun' && !parsed.ALIYUN_API_KEY) {
-      throw new Error('ALIYUN_API_KEY is required when TRANSLATION_PROVIDER=aliyun');
-    }
     if (parsed.SUMMARY_PROVIDER !== 'aliyun') {
       throw new Error('Production requires SUMMARY_PROVIDER=aliyun');
-    }
-    if (
-      parsed.TRANSLATION_PROVIDER === 'aliyun' &&
-      (!parsed.ALIYUN_TTS_VOICE_ZH || !parsed.ALIYUN_TTS_VOICE_RU)
-    ) {
-      throw new Error('Both Chinese and Russian TTS voices are required in production');
     }
     if (parsed.EMAIL_PROVIDER !== 'resend') {
       throw new Error('Production requires EMAIL_PROVIDER=resend');
     }
-    if (!parsed.RESEND_API_KEY || !parsed.EMAIL_FROM) {
-      throw new Error('RESEND_API_KEY and EMAIL_FROM are required in production');
-    }
     if (parsed.AUDIO_STORAGE_DRIVER !== 's3') {
       throw new Error('Production requires AUDIO_STORAGE_DRIVER=s3');
-    }
-    if (
-      !parsed.S3_ENDPOINT ||
-      !parsed.S3_REGION ||
-      !parsed.S3_BUCKET ||
-      !parsed.S3_ACCESS_KEY_ID ||
-      !parsed.S3_SECRET_ACCESS_KEY
-    ) {
-      throw new Error('S3 object storage configuration is required in production');
     }
     if (!parsed.AUDIO_URL_SIGNING_SECRET) {
       throw new Error('AUDIO_URL_SIGNING_SECRET is required in production');
@@ -164,7 +161,7 @@ export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppCon
       !parsed.ALIYUN_COMPATIBLE_BASE_URL.startsWith('https://') ||
       !parsed.ALIYUN_DASHSCOPE_BASE_URL.startsWith('https://') ||
       !parsed.RESEND_API_BASE_URL.startsWith('https://') ||
-      !parsed.S3_ENDPOINT?.startsWith('https://')
+      (parsed.S3_ENDPOINT != null && !parsed.S3_ENDPOINT.startsWith('https://'))
     ) {
       throw new Error('Production public and external service URLs must use HTTPS');
     }

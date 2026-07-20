@@ -24,6 +24,14 @@ import {
   participantDto,
 } from './services/conversations.js';
 import { recoverStaleProcessingMessages } from './services/message-processing.js';
+import {
+  AliyunRealtimeTranslationNotConfiguredError,
+  AliyunRealtimeTranslationProtocolError,
+  createAliyunRealtimeTranslationSession,
+  type AliyunRealtimeTranslationSession,
+  type RealtimeTranslationEvent,
+  type RealtimeTranslationLanguage,
+} from './services/aliyun-realtime-translation.js';
 
 interface SocketData {
   auth: AuthContext;
@@ -43,6 +51,21 @@ const MAX_TIMEOUT_MS = 2_147_000_000;
 const AUTH_REVALIDATION_INTERVAL_MS = 15_000;
 const ROOM_JOIN_RATE_WINDOW_MS = 10_000;
 const MAX_ROOM_JOIN_ATTEMPTS_PER_WINDOW = 8;
+const CALL_TRANSLATION_AUTH_INTERVAL_MS = 5_000;
+
+interface ActiveCallTranslation {
+  key: string;
+  callId: string;
+  socketId: string;
+  sourceSubjectId: string;
+  sourceDeviceId: string;
+  targetSubjectId: string;
+  targetDeviceId: string;
+  sourceLanguage: RealtimeTranslationLanguage;
+  targetLanguage: RealtimeTranslationLanguage;
+  session: AliyunRealtimeTranslationSession;
+  lastAuthorizedAt: number;
+}
 
 export async function attachRealtime(app: FastifyInstance): Promise<Server> {
   const io = new Server<
@@ -59,6 +82,23 @@ export async function attachRealtime(app: FastifyInstance): Promise<Server> {
       transports: ['websocket'],
       maxHttpBufferSize: 100_000,
   });
+
+  const callTranslationSessions = new Map<string, ActiveCallTranslation>();
+  const callTranslationStarts = new Set<string>();
+
+  const closeCallTranslation = (key: string, graceful: boolean): void => {
+    const active = callTranslationSessions.get(key);
+    if (!active) return;
+    callTranslationSessions.delete(key);
+    if (graceful) void active.session.finish();
+    else active.session.abort();
+  };
+
+  const closeTranslationsForCall = (callId: string): void => {
+    for (const [key, active] of callTranslationSessions) {
+      if (active.callId === callId) closeCallTranslation(key, false);
+    }
+  };
 
   let redisClients: [Redis, Redis] | undefined;
   let redisReady = !config.REDIS_URL;
@@ -191,6 +231,169 @@ export async function attachRealtime(app: FastifyInstance): Promise<Server> {
       });
     scheduleTokenExpiry(socket);
 
+    socket.on(
+      'friend.call.translation.start',
+      async (payload, acknowledge?: (value: unknown) => void) => {
+        const callId = String(payload?.callId ?? '');
+        const key = `${socket.id}:${callId}`;
+        let startGuardKey: string | undefined;
+        try {
+          if (!callId) throw new AppError(400, 'FRIEND_CALL_ID_REQUIRED', '缺少通话标识');
+          closeCallTranslation(key, false);
+          const auth = socket.data.auth;
+          if (auth.role === 'GUEST') {
+            throw new AppError(403, 'FORMAL_ACCOUNT_REQUIRED', '临时用户不能使用好友通话');
+          }
+          startGuardKey = `${callId}:${auth.subjectId}:${auth.deviceId}`;
+          if (callTranslationStarts.has(startGuardKey)) {
+            throw new AppError(409, 'REALTIME_TRANSLATION_STARTING', '实时翻译正在连接');
+          }
+          callTranslationStarts.add(startGuardKey);
+          for (const [existingKey, existing] of callTranslationSessions) {
+            if (
+              existing.callId === callId &&
+              existing.sourceSubjectId === auth.subjectId &&
+              existing.sourceDeviceId === auth.deviceId
+            ) {
+              closeCallTranslation(existingKey, false);
+            }
+          }
+          const call = await prisma.friendCall.findFirst({
+            where: {
+              id: callId,
+              status: 'ACTIVE',
+              OR: [
+                { callerId: auth.subjectId, callerDeviceId: auth.deviceId },
+                { calleeId: auth.subjectId, calleeDeviceId: auth.deviceId },
+              ],
+            },
+            select: {
+              callerId: true,
+              callerDeviceId: true,
+              calleeId: true,
+              calleeDeviceId: true,
+              caller: { select: { preferredLanguage: true, autoPlayTranslationAudio: true } },
+              callee: { select: { preferredLanguage: true, autoPlayTranslationAudio: true } },
+            },
+          });
+          if (!call || !call.calleeDeviceId) {
+            throw new AppError(404, 'ACTIVE_FRIEND_CALL_NOT_FOUND', '通话已经结束或已在其他设备接听');
+          }
+          const callerIsSource = call.callerId === auth.subjectId;
+          const sourceLanguage = callLanguage(
+            callerIsSource ? call.caller.preferredLanguage : call.callee.preferredLanguage,
+          );
+          const targetLanguage = callLanguage(
+            callerIsSource ? call.callee.preferredLanguage : call.caller.preferredLanguage,
+          );
+          if (sourceLanguage === targetLanguage) {
+            throw new AppError(409, 'CALL_TRANSLATION_SAME_LANGUAGE', '双方语言相同，无需实时翻译');
+          }
+          const sourceSubjectId = auth.subjectId;
+          const sourceDeviceId = auth.deviceId;
+          const targetSubjectId = callerIsSource ? call.calleeId : call.callerId;
+          const targetDeviceId = callerIsSource ? call.calleeDeviceId : call.callerDeviceId;
+          const outputAudio = callerIsSource
+            ? call.callee.autoPlayTranslationAudio
+            : call.caller.autoPlayTranslationAudio;
+          let active: ActiveCallTranslation | undefined;
+          const session = await createAliyunRealtimeTranslationSession({
+            sourceLanguage,
+            targetLanguage,
+            outputAudio,
+            onEvent: (event) => {
+              if (!active || callTranslationSessions.get(key) !== active) return;
+              emitCallTranslationEvent(io, active, event, app);
+              if (event.type === 'finished' || event.type === 'error') {
+                if (event.type === 'error') closeTranslationsForCall(callId);
+                else callTranslationSessions.delete(key);
+              }
+            },
+          });
+          active = {
+            key,
+            callId,
+            socketId: socket.id,
+            sourceSubjectId,
+            sourceDeviceId,
+            targetSubjectId,
+            targetDeviceId,
+            sourceLanguage,
+            targetLanguage,
+            session,
+            lastAuthorizedAt: Date.now(),
+          };
+          callTranslationSessions.set(key, active);
+          const response = {
+            callId,
+            sourceLanguage,
+            targetLanguage,
+            outputAudio,
+          };
+          io.to(deviceRoomName(sourceSubjectId, sourceDeviceId))
+            .to(deviceRoomName(targetSubjectId, targetDeviceId))
+            .emit('friend.call.translation.ready', response);
+          acknowledge?.({ ok: true, data: response });
+        } catch (error) {
+          const translated = callTranslationSocketError(error);
+          acknowledge?.({ ok: false, error: translated });
+          socket.emit('friend.call.translation.error', { callId, ...translated });
+        } finally {
+          if (startGuardKey) callTranslationStarts.delete(startGuardKey);
+        }
+      },
+    );
+
+    socket.on('friend.call.translation.audio', async (payload) => {
+      const callId = String(payload?.callId ?? '');
+      const key = `${socket.id}:${callId}`;
+      const active = callTranslationSessions.get(key);
+      if (!active) return;
+      try {
+        if (Date.now() - active.lastAuthorizedAt >= CALL_TRANSLATION_AUTH_INTERVAL_MS) {
+          const stillAuthorized = await prisma.friendCall.count({
+            where: {
+              id: callId,
+              status: 'ACTIVE',
+              OR: [
+                {
+                  callerId: active.sourceSubjectId,
+                  callerDeviceId: active.sourceDeviceId,
+                },
+                {
+                  calleeId: active.sourceSubjectId,
+                  calleeDeviceId: active.sourceDeviceId,
+                },
+              ],
+            },
+          });
+          if (stillAuthorized !== 1) {
+            throw new AppError(403, 'ACTIVE_FRIEND_CALL_NOT_FOUND', '通话已经结束');
+          }
+          active.lastAuthorizedAt = Date.now();
+        }
+        const audio = String(payload?.audio ?? '');
+        const sequence = Number(payload?.sequence);
+        if (
+          audio.length === 0 ||
+          audio.length > 20_000 ||
+          !/^[A-Za-z0-9+/]*={0,2}$/.test(audio)
+        ) {
+          throw new AliyunRealtimeTranslationProtocolError('PCM audio payload is invalid');
+        }
+        active.session.appendAudio(Buffer.from(audio, 'base64'), sequence);
+      } catch (error) {
+        const translated = callTranslationSocketError(error);
+        socket.emit('friend.call.translation.error', { callId, ...translated });
+        closeCallTranslation(key, false);
+      }
+    });
+
+    socket.on('friend.call.translation.finish', (payload) => {
+      const callId = String(payload?.callId ?? '');
+      closeCallTranslation(`${socket.id}:${callId}`, true);
+    });
+
     // A join performs several authorization and recovery reads. Keep a single
     // socket from multiplying that work with concurrent or tight-loop emits.
     // Reconnects use a new socket and are unaffected by this local guard.
@@ -198,10 +401,18 @@ export async function attachRealtime(app: FastifyInstance): Promise<Server> {
     let roomJoinWindowStartedAt = Date.now();
     let roomJoinAttemptsInWindow = 0;
 
-    socket.use(async (_packet, next) => {
+    socket.use(async (packet, next) => {
       try {
         await authRoomsReady;
-        await validateSocketAndJoinedRooms(socket.data, socket.rooms);
+        // Audio arrives every 100 ms. A full database revocation check per
+        // frame would multiply load significantly; token expiry is checked on
+        // every frame, while the call/device is revalidated every five seconds
+        // and the global auth sweep still revokes sessions within 15 seconds.
+        if (packet[0] === 'friend.call.translation.audio') {
+          assertSocketTokenFresh(socket.data);
+        } else {
+          await validateSocketAndJoinedRooms(socket.data, socket.rooms);
+        }
         next();
       } catch (error) {
         disconnectForAuthError(socket, error);
@@ -326,6 +537,9 @@ export async function attachRealtime(app: FastifyInstance): Promise<Server> {
     });
 
     socket.on('disconnect', () => {
+      for (const [key, active] of callTranslationSessions) {
+        if (active.socketId === socket.id) closeCallTranslation(key, true);
+      }
       for (const [conversationId, participantId] of Object.entries(
         socket.data.participantIds,
       )) {
@@ -520,6 +734,9 @@ export async function attachRealtime(app: FastifyInstance): Promise<Server> {
         return matched;
       }
     },
+    stopFriendCallTranslation: (callId) => {
+      closeTranslationsForCall(callId);
+    },
     isSubjectOnline: async (subjectId) => {
       const sockets = await io.in(subjectRoomName(subjectId)).fetchSockets();
       return sockets.length > 0;
@@ -532,6 +749,8 @@ export async function attachRealtime(app: FastifyInstance): Promise<Server> {
     clearInterval(authSweep);
     emitChains.clear();
     subjectEmitChains.clear();
+    for (const key of callTranslationSessions.keys()) closeCallTranslation(key, false);
+    callTranslationStarts.clear();
     setRealtimeHub({
       emitToConversation: () => undefined,
       emitToSubject: () => undefined,
@@ -539,6 +758,7 @@ export async function attachRealtime(app: FastifyInstance): Promise<Server> {
       disconnectSubject: () => undefined,
       disconnectParticipant: async () => true,
       disconnectDirectChatParticipant: async () => true,
+      stopFriendCallTranslation: () => undefined,
       isSubjectOnline: async () => false,
       isReady: () => true,
     });
@@ -739,6 +959,67 @@ async function assertRealtimeRoomOpen(
   throw new AppError(403, 'ROOM_EXPIRED', '房间已结束或过期');
 }
 
+function emitCallTranslationEvent(
+  io: Server,
+  active: ActiveCallTranslation,
+  event: RealtimeTranslationEvent,
+  app: FastifyInstance,
+): void {
+  if (event.type === 'translation.audio') {
+    io.to(deviceRoomName(active.targetSubjectId, active.targetDeviceId)).emit(
+      'friend.call.translation.audio',
+      {
+        callId: active.callId,
+        speakerId: active.sourceSubjectId,
+        audio: event.audio,
+        sampleRate: event.sampleRate,
+      },
+    );
+    return;
+  }
+  if (event.type === 'error') {
+    app.log.warn(
+      { callId: active.callId, code: event.code },
+      'Friend call realtime translation failed',
+    );
+    io.to(deviceRoomName(active.sourceSubjectId, active.sourceDeviceId))
+      .to(deviceRoomName(active.targetSubjectId, active.targetDeviceId))
+      .emit('friend.call.translation.error', {
+        callId: active.callId,
+        code: 'REALTIME_TRANSLATION_FAILED',
+        message: '实时翻译服务暂时不可用，已恢复原声通话',
+      });
+    return;
+  }
+  if (event.type === 'finished') {
+    io.to(deviceRoomName(active.sourceSubjectId, active.sourceDeviceId))
+      .to(deviceRoomName(active.targetSubjectId, active.targetDeviceId))
+      .emit('friend.call.translation.finished', { callId: active.callId });
+    return;
+  }
+  io.to(deviceRoomName(active.sourceSubjectId, active.sourceDeviceId))
+    .to(deviceRoomName(active.targetSubjectId, active.targetDeviceId))
+    .emit('friend.call.translation.text', {
+      callId: active.callId,
+      speakerId: active.sourceSubjectId,
+      kind: event.type,
+      text: event.text,
+      language: event.language,
+    });
+}
+
+function callLanguage(value: string): RealtimeTranslationLanguage {
+  return value.toLowerCase() === 'ru' ? 'ru' : 'zh';
+}
+
+function callTranslationSocketError(error: unknown): { code: string; message: string } {
+  if (error instanceof AppError) return { code: error.code, message: error.message };
+  if (error instanceof AliyunRealtimeTranslationNotConfiguredError) {
+    return { code: 'REALTIME_TRANSLATION_NOT_CONFIGURED', message: '实时翻译服务尚未配置' };
+  }
+  return { code: 'REALTIME_TRANSLATION_FAILED', message: '实时翻译服务暂时不可用，已恢复原声通话' };
+}
+
 const roomName = (conversationId: string) => `conversation:${conversationId}`;
 const roomSegment = (value: string) => Buffer.from(value).toString('base64url');
 const subjectRoomName = (subjectId: string) => `auth:subject:${roomSegment(subjectId)}`;
@@ -746,10 +1027,14 @@ const deviceRoomName = (subjectId: string, deviceId: string) =>
   `auth:device:${roomSegment(subjectId)}:${roomSegment(deviceId)}`;
 
 async function assertSocketAuthorized(data: SocketData): Promise<void> {
+  assertSocketTokenFresh(data);
+  await validateAuthContext(data.auth);
+}
+
+function assertSocketTokenFresh(data: SocketData): void {
   if (!data.auth || !Number.isFinite(data.tokenExpiresAt) || data.tokenExpiresAt <= Date.now()) {
     throw new AppError(401, 'TOKEN_INVALID', '登录凭证无效或已过期');
   }
-  await validateAuthContext(data.auth);
 }
 
 export async function validateSocketAndJoinedRooms(

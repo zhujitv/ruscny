@@ -8,6 +8,7 @@ export interface RealtimeHub {
     conversationId: string,
     participantId: string,
   ): Promise<boolean>;
+  stopFriendCallTranslation(callId: string): void;
   isSubjectOnline(subjectId: string): Promise<boolean>;
   isReady(): boolean;
 }
@@ -19,6 +20,7 @@ let hub: RealtimeHub = {
   disconnectSubject: () => undefined,
   disconnectParticipant: async () => true,
   disconnectDirectChatParticipant: async () => true,
+  stopFriendCallTranslation: () => undefined,
   isSubjectOnline: async () => false,
   isReady: () => true,
 };

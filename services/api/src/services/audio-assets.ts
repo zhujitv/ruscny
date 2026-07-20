@@ -10,28 +10,40 @@ import {
 import { config } from '../config.js';
 import { AppError, notFound } from '../errors.js';
 import { safeEqual } from '../lib/crypto.js';
+import { serviceConfiguration } from './service-configuration.js';
 
 const assetPrefix = 'asset:';
 const maximumTtsBytes = 15_000_000;
 const validKey = /^tts-[0-9a-f-]+\.(mp3|wav|ogg|aac|m4a)$/;
 
 let s3Client: S3Client | undefined;
+let s3ClientFingerprint: string | undefined;
 
-function s3(): S3Client {
-  if (!s3Client) {
-    s3Client = new S3Client({
-      endpoint: config.S3_ENDPOINT,
-      region: config.S3_REGION,
-      forcePathStyle: config.S3_FORCE_PATH_STYLE,
-      credentials: config.S3_ACCESS_KEY_ID && config.S3_SECRET_ACCESS_KEY
-        ? {
-            accessKeyId: config.S3_ACCESS_KEY_ID,
-            secretAccessKey: config.S3_SECRET_ACCESS_KEY,
-          }
-        : undefined,
-    });
+async function s3(): Promise<{ client: S3Client; bucket: string }> {
+  const [endpoint, region, bucket, accessKeyId, secretAccessKey, forcePathStyleValue] =
+    await Promise.all([
+      serviceConfiguration('S3_ENDPOINT'),
+      serviceConfiguration('S3_REGION'),
+      serviceConfiguration('S3_BUCKET'),
+      serviceConfiguration('S3_ACCESS_KEY_ID'),
+      serviceConfiguration('S3_SECRET_ACCESS_KEY'),
+      serviceConfiguration('S3_FORCE_PATH_STYLE'),
+    ]);
+  if (!endpoint || !region || !bucket || !accessKeyId || !secretAccessKey) {
+    throw new AppError(503, 'STORAGE_NOT_CONFIGURED', '对象存储尚未配置');
   }
-  return s3Client;
+  const fingerprint = [endpoint, region, accessKeyId, secretAccessKey, forcePathStyleValue].join('\u0000');
+  if (!s3Client || s3ClientFingerprint !== fingerprint) {
+    s3Client?.destroy();
+    s3Client = new S3Client({
+      endpoint,
+      region,
+      forcePathStyle: forcePathStyleValue === 'true',
+      credentials: { accessKeyId, secretAccessKey },
+    });
+    s3ClientFingerprint = fingerprint;
+  }
+  return { client: s3Client, bucket };
 }
 
 export async function persistTtsAudio(upstreamUrl: string): Promise<string> {
@@ -85,9 +97,10 @@ export async function persistTtsAudio(upstreamUrl: string): Promise<string> {
   const key = `tts-${randomUUID()}.${extensionFor(contentType)}`;
 
   if (config.AUDIO_STORAGE_DRIVER === 's3') {
-    await s3().send(
+    const storage = await s3();
+    await storage.client.send(
       new PutObjectCommand({
-        Bucket: config.S3_BUCKET!,
+        Bucket: storage.bucket,
         Key: key,
         Body: bytes,
         ContentType: contentType,
@@ -144,8 +157,9 @@ export async function readTtsAsset(
   if (!validKey.test(key)) throw notFound('AUDIO_NOT_FOUND', '语音不存在');
   try {
     if (config.AUDIO_STORAGE_DRIVER === 's3') {
-      const result = await s3().send(
-        new GetObjectCommand({ Bucket: config.S3_BUCKET!, Key: key }),
+      const storage = await s3();
+      const result = await storage.client.send(
+        new GetObjectCommand({ Bucket: storage.bucket, Key: key }),
       );
       if (result.ContentLength && result.ContentLength > maximumTtsBytes) {
         throw new Error('object too large');
@@ -170,7 +184,8 @@ export async function deleteTtsAsset(storedValue: string | null): Promise<void> 
   const key = storedValue.slice(assetPrefix.length);
   try {
     if (config.AUDIO_STORAGE_DRIVER === 's3') {
-      await s3().send(new DeleteObjectCommand({ Bucket: config.S3_BUCKET!, Key: key }));
+      const storage = await s3();
+      await storage.client.send(new DeleteObjectCommand({ Bucket: storage.bucket, Key: key }));
     } else {
       await unlink(path.join(config.AUDIO_LOCAL_DIRECTORY, key));
     }

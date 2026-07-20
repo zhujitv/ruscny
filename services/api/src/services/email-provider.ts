@@ -1,6 +1,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { config } from '../config.js';
+import { serviceConfiguration } from './service-configuration.js';
 
 export interface TransactionalEmail {
   to: string;
@@ -38,26 +39,32 @@ export async function sendTransactionalEmail(
         .slice(0, 24)}`,
     };
   }
-  if (!config.RESEND_API_KEY || !config.EMAIL_FROM) {
+  const [apiKey, baseUrl, from, replyTo] = await Promise.all([
+    serviceConfiguration('RESEND_API_KEY'),
+    serviceConfiguration('RESEND_API_BASE_URL'),
+    serviceConfiguration('EMAIL_FROM'),
+    serviceConfiguration('EMAIL_REPLY_TO'),
+  ]);
+  if (!apiKey || !from) {
     throw new EmailProviderError('EMAIL_NOT_CONFIGURED', '邮件服务尚未配置');
   }
 
   let response: Response;
   try {
-    response = await fetcher(`${config.RESEND_API_BASE_URL.replace(/\/$/, '')}/emails`, {
+    response = await fetcher(`${baseUrl!.replace(/\/$/, '')}/emails`, {
       method: 'POST',
       headers: {
-        Authorization: `Bearer ${config.RESEND_API_KEY}`,
+        Authorization: `Bearer ${apiKey}`,
         'Content-Type': 'application/json',
         'Idempotency-Key': email.idempotencyKey,
       },
       body: JSON.stringify({
-        from: config.EMAIL_FROM,
+        from,
         to: [email.to],
         subject: email.subject,
         text: email.text,
         html: email.html,
-        ...(config.EMAIL_REPLY_TO ? { reply_to: config.EMAIL_REPLY_TO } : {}),
+        ...(replyTo ? { reply_to: replyTo } : {}),
       }),
       redirect: 'error',
       signal: AbortSignal.timeout(config.EMAIL_REQUEST_TIMEOUT_MS),

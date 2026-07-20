@@ -13,6 +13,7 @@ import { attachRealtime } from './realtime.js';
 import { realtimeHub } from './realtime-hub.js';
 import { registerAdminRoutes } from './routes/admin.js';
 import { registerAdminBusinessRoutes } from './routes/admin-business.js';
+import { registerAdminServiceConfigurationRoutes } from './routes/admin-service-configuration.js';
 import { registerAdminWebRoutes } from './routes/admin-web.js';
 import { registerCustomerWebRoutes } from './routes/customer-web.js';
 import { registerAuthRoutes } from './routes/auth.js';
@@ -23,8 +24,10 @@ import { registerGlossaryRoutes } from './routes/glossary.js';
 import { registerMessageReviewRoutes } from './routes/message-reviews.js';
 import { registerMessageRoutes } from './routes/messages.js';
 import { registerSocialRoutes } from './routes/social.js';
+import { registerFriendCallRoutes } from './routes/friend-calls.js';
 import { registerSummaryEmailRoutes } from './routes/summary-email.js';
 import { registerWebGuestRoutes } from './routes/web-guest.js';
+import { assertRuntimeServiceConfigurationReady } from './services/service-configuration.js';
 
 interface BuildOptions {
   logger?: FastifyServerOptions['logger'];
@@ -131,6 +134,11 @@ export async function buildApp(options: BuildOptions = {}): Promise<FastifyInsta
     if (!realtimeHub().isReady()) {
       throw new AppError(503, 'REALTIME_NOT_READY', '实时通信暂未就绪');
     }
+    try {
+      await assertRuntimeServiceConfigurationReady();
+    } catch {
+      throw new AppError(503, 'SERVICE_CONFIGURATION_NOT_READY', '外部服务配置不完整或无法解密');
+    }
     return {
       ok: true,
       data: {
@@ -146,6 +154,7 @@ export async function buildApp(options: BuildOptions = {}): Promise<FastifyInsta
   await registerAuthRoutes(app);
   await registerAdminRoutes(app);
   await registerAdminBusinessRoutes(app);
+  await registerAdminServiceConfigurationRoutes(app);
   await registerAudioAssetRoutes(app);
   await registerContactRoutes(app);
   await registerConversationRoutes(app);
@@ -153,6 +162,7 @@ export async function buildApp(options: BuildOptions = {}): Promise<FastifyInsta
   await registerMessageReviewRoutes(app);
   await registerMessageRoutes(app);
   await registerSocialRoutes(app);
+  await registerFriendCallRoutes(app);
   await registerSummaryEmailRoutes(app);
 
   app.setNotFoundHandler(async (_request, reply) => {

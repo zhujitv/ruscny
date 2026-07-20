@@ -9,6 +9,7 @@ const mocks = vi.hoisted(() => {
     contact: { findFirst: vi.fn(), create: vi.fn() },
     friendship: { deleteMany: vi.fn() },
     friendRequest: { deleteMany: vi.fn() },
+    friendCall: { findMany: vi.fn(), updateMany: vi.fn() },
   };
   return {
     transaction,
@@ -37,6 +38,7 @@ vi.mock('../src/realtime-hub.js', () => ({
   realtimeHub: () => ({
     emitToSubject: mocks.emitToSubject,
     disconnectDirectChatParticipant: mocks.disconnectDirectChatParticipant,
+    stopFriendCallTranslation: vi.fn(),
     isSubjectOnline: vi.fn().mockResolvedValue(false),
   }),
 }));
@@ -77,6 +79,7 @@ beforeEach(async () => {
     { id: 'user-a', status: 'ACTIVE' },
     { id: 'user-b', status: 'ACTIVE' },
   ]);
+  mocks.transaction.friendCall.findMany.mockResolvedValue([]);
   app = Fastify({ logger: false });
   app.setErrorHandler(async (error, _request, reply) => {
     if (error instanceof AppError) {
@@ -101,6 +104,8 @@ describe('friend direct chats', () => {
     });
     mocks.transaction.friendship.deleteMany.mockResolvedValue({ count: 1 });
     mocks.transaction.friendRequest.deleteMany.mockResolvedValue({ count: 2 });
+    mocks.transaction.friendCall.findMany.mockResolvedValue([{ id: 'call-a-b' }]);
+    mocks.transaction.friendCall.updateMany.mockResolvedValue({ count: 1 });
 
     const response = await app!.inject({
       method: 'DELETE',
@@ -116,6 +121,12 @@ describe('friend direct chats', () => {
     expect(mocks.disconnectDirectChatParticipant).toHaveBeenCalledWith(
       'direct-a-b',
       'participant-b',
+    );
+    expect(mocks.transaction.friendCall.updateMany).toHaveBeenCalled();
+    expect(mocks.emitToSubject).toHaveBeenCalledWith(
+      'user-b',
+      'friend.call.ended',
+      { callId: 'call-a-b', status: 'ENDED' },
     );
   });
 

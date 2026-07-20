@@ -1,5 +1,6 @@
 import { z } from 'zod';
 import { config } from '../config.js';
+import { serviceConfiguration } from '../services/service-configuration.js';
 import { AppError } from '../errors.js';
 
 const sourceSequences = z.array(z.coerce.number().int().positive())
@@ -117,7 +118,7 @@ type SummaryProviderRuntime = Pick<typeof config,
 
 export class AliyunMeetingSummaryProvider implements MeetingSummaryProvider {
   constructor(
-    private readonly runtime: SummaryProviderRuntime = config,
+    private readonly runtime?: SummaryProviderRuntime,
     private readonly fetcher: typeof fetch = fetch,
   ) {}
 
@@ -126,14 +127,20 @@ export class AliyunMeetingSummaryProvider implements MeetingSummaryProvider {
     participants: SummaryParticipant[];
     messages: SummaryTranscriptMessage[];
   }): Promise<GeneratedMeetingSummaryResult> {
-    if (!this.runtime.ALIYUN_API_KEY) {
+    const runtime = this.runtime ?? {
+      ...config,
+      ALIYUN_API_KEY: await serviceConfiguration('ALIYUN_API_KEY'),
+      ALIYUN_COMPATIBLE_BASE_URL: (await serviceConfiguration('ALIYUN_COMPATIBLE_BASE_URL'))!,
+      ALIYUN_SUMMARY_MODEL: (await serviceConfiguration('ALIYUN_SUMMARY_MODEL'))!,
+    };
+    if (!runtime.ALIYUN_API_KEY) {
       throw new AppError(503, 'PROVIDER_CONFIGURATION_ERROR', '阿里云会议纪要服务未配置');
     }
-    if (input.messages.length > this.runtime.SUMMARY_MAX_MESSAGES) {
+    if (input.messages.length > runtime.SUMMARY_MAX_MESSAGES) {
       throw new AppError(
         413,
         'SUMMARY_TRANSCRIPT_TOO_LARGE',
-        `本场会议超过 ${this.runtime.SUMMARY_MAX_MESSAGES} 条发言，请分段整理`,
+        `本场会议超过 ${runtime.SUMMARY_MAX_MESSAGES} 条发言，请分段整理`,
       );
     }
     const serializedInput = JSON.stringify({
@@ -141,7 +148,7 @@ export class AliyunMeetingSummaryProvider implements MeetingSummaryProvider {
       participants: input.participants,
       transcript: input.messages,
     });
-    if (serializedInput.length > this.runtime.SUMMARY_MAX_INPUT_CHARACTERS) {
+    if (serializedInput.length > runtime.SUMMARY_MAX_INPUT_CHARACTERS) {
       throw new AppError(
         413,
         'SUMMARY_TRANSCRIPT_TOO_LARGE',
@@ -152,15 +159,15 @@ export class AliyunMeetingSummaryProvider implements MeetingSummaryProvider {
     let response: Response;
     try {
       response = await this.fetcher(
-        `${this.runtime.ALIYUN_COMPATIBLE_BASE_URL.replace(/\/$/, '')}/chat/completions`,
+        `${runtime.ALIYUN_COMPATIBLE_BASE_URL.replace(/\/$/, '')}/chat/completions`,
         {
           method: 'POST',
           headers: {
-            Authorization: `Bearer ${this.runtime.ALIYUN_API_KEY}`,
+            Authorization: `Bearer ${runtime.ALIYUN_API_KEY}`,
             'Content-Type': 'application/json',
           },
           body: JSON.stringify({
-            model: this.runtime.ALIYUN_SUMMARY_MODEL,
+            model: runtime.ALIYUN_SUMMARY_MODEL,
             temperature: 0.1,
             enable_thinking: false,
             max_completion_tokens: 8_000,
@@ -173,7 +180,7 @@ export class AliyunMeetingSummaryProvider implements MeetingSummaryProvider {
               },
             ],
           }),
-          signal: AbortSignal.timeout(this.runtime.SUMMARY_REQUEST_TIMEOUT_MS),
+          signal: AbortSignal.timeout(runtime.SUMMARY_REQUEST_TIMEOUT_MS),
         },
       );
     } catch (error) {
@@ -217,7 +224,7 @@ export class AliyunMeetingSummaryProvider implements MeetingSummaryProvider {
       draft: safeGenerated,
       audit: {
         provider: 'aliyun',
-        model: this.runtime.ALIYUN_SUMMARY_MODEL,
+        model: runtime.ALIYUN_SUMMARY_MODEL,
         promptVersion: SUMMARY_PROMPT_VERSION,
         providerRequestId: response.headers.get('x-request-id') ?? payload.request_id ?? payload.id,
         inputTokens: payload.usage?.prompt_tokens ?? payload.usage?.input_tokens,

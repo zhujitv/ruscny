@@ -138,7 +138,18 @@
 
       <section id="view-governance" class="view-panel hidden"><div id="governanceCards" class="metric-grid"></div><section class="panel panel-spaced"><form id="governanceFilters" class="filters"><div></div><select id="governanceStatus"><option value="" data-i18n="allStatuses">全部状态</option><option>PENDING</option><option>IN_PROGRESS</option><option>COMPLETED</option><option>PARTIAL_FAILURE</option></select><button class="primary" data-i18n="search">查询</button></form><div class="table-wrap"><table><thead><tr><th data-i18n="time">时间</th><th data-i18n="subject">数据主体</th><th data-i18n="status">状态</th><th data-i18n="steps">处理步骤</th><th data-i18n="details">详情</th></tr></thead><tbody id="governanceBody"></tbody></table></div><div id="governancePagination" class="pagination"></div></section></section>
 
-      <section id="view-settings" class="view-panel hidden"><section class="panel"><div class="panel-heading"><div><p class="eyebrow">SAFE SETTINGS</p><h2 data-i18n="businessSettings">业务配置</h2></div></div><p class="panel-note" data-i18n="settingsHint">这里只提供安全业务开关，不显示任何密钥或数据库地址。</p><div id="settingsList" class="settings-list"></div></section></section>
+      <section id="view-settings" class="view-panel hidden">
+        <section class="panel">
+          <div class="panel-heading"><div><p class="eyebrow">BUSINESS SETTINGS</p><h2 data-i18n="businessSettings">业务配置</h2></div></div>
+          <p class="panel-note" data-i18n="settingsHint">业务开关独立保存并保留完整审计记录。</p>
+          <div id="settingsList" class="settings-list"></div>
+        </section>
+        <section class="panel">
+          <div class="panel-heading"><div><p class="eyebrow">SERVICE CONNECTIONS</p><h2 data-i18n="serviceConnections">服务接入配置</h2></div></div>
+          <p class="panel-note" data-i18n="serviceConnectionsHint">密钥经过加密保存且永不回显；部署环境配置可逐项迁移到这里。</p>
+          <div id="serviceConfigurations" class="service-configurations"></div>
+        </section>
+      </section>
 
       <section id="view-users" class="view-panel hidden">
         <section class="panel">

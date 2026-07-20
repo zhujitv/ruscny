@@ -232,7 +232,7 @@ export async function registerSocialRoutes(app: FastifyInstance): Promise<void> 
     assertRegistered(request.auth.role);
     const { friendId } = z.object({ friendId: z.string() }).parse(request.params);
     const [userAId, userBId] = canonicalPair(request.auth.subjectId, friendId);
-    const directChat = await prisma.$transaction(async (tx) => {
+    const removal = await prisma.$transaction(async (tx) => {
       await lockUserRows(tx, [userAId, userBId]);
       const conversation = await tx.conversation.findUnique({
         where: { directPairKey: `${userAId}:${userBId}` },
@@ -254,16 +254,36 @@ export async function registerSocialRoutes(app: FastifyInstance): Promise<void> 
           ],
         },
       });
-      return conversation;
+      const activeCalls = await tx.friendCall.findMany({
+        where: {
+          status: { in: ['RINGING', 'ACTIVE'] },
+          OR: [
+            { callerId: userAId, calleeId: userBId },
+            { callerId: userBId, calleeId: userAId },
+          ],
+        },
+        select: { id: true },
+      });
+      if (activeCalls.length) {
+        await tx.friendCall.updateMany({
+          where: { id: { in: activeCalls.map((call) => call.id) }, status: { in: ['RINGING', 'ACTIVE'] } },
+          data: { status: 'ENDED', endedAt: new Date(), endedById: request.auth.subjectId },
+        });
+      }
+      return { conversation, endedCallIds: activeCalls.map((call) => call.id) };
     });
     realtimeHub().emitToSubject(friendId, 'friend.removed', {
       userId: request.auth.subjectId,
     });
-    if (directChat) {
+    for (const callId of removal.endedCallIds) {
+      realtimeHub().stopFriendCallTranslation(callId);
+      realtimeHub().emitToSubject(friendId, 'friend.call.ended', { callId, status: 'ENDED' });
+    }
+    if (removal.conversation) {
       await Promise.all(
-        directChat.participants.map((participant) =>
+        removal.conversation.participants.map((participant) =>
           realtimeHub().disconnectDirectChatParticipant(
-            directChat.id,
+            removal.conversation!.id,
             participant.id,
           )),
       );

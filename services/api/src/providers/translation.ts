@@ -1,6 +1,7 @@
 import type { Language } from '@prisma/client';
 import { config } from '../config.js';
 import { AppError } from '../errors.js';
+import { serviceConfiguration } from '../services/service-configuration.js';
 
 export interface TranslationTerm {
   source: string;
@@ -83,7 +84,8 @@ class AliyunTranslationProvider implements TranslationProvider {
     url: string,
     body: unknown,
   ): Promise<{ json: OpenAICompatibleResponse; requestId?: string }> {
-    if (!config.ALIYUN_API_KEY) {
+    const apiKey = await serviceConfiguration('ALIYUN_API_KEY');
+    if (!apiKey) {
       throw new AppError(503, 'PROVIDER_CONFIGURATION_ERROR', '阿里云服务未配置');
     }
     let response: Response;
@@ -91,7 +93,7 @@ class AliyunTranslationProvider implements TranslationProvider {
       response = await fetch(url, {
         method: 'POST',
         headers: {
-          Authorization: `Bearer ${config.ALIYUN_API_KEY}`,
+          Authorization: `Bearer ${apiKey}`,
           'Content-Type': 'application/json',
         },
         body: JSON.stringify(body),
@@ -119,11 +121,15 @@ class AliyunTranslationProvider implements TranslationProvider {
     mimeType: string;
     language: 'zh' | 'ru';
   }): Promise<{ text: string; provider: string; requestId?: string }> {
+    const [baseUrl, model] = await Promise.all([
+      serviceConfiguration('ALIYUN_COMPATIBLE_BASE_URL'),
+      serviceConfiguration('ALIYUN_ASR_MODEL'),
+    ]);
     const data = `data:${input.mimeType};base64,${input.audio.toString('base64')}`;
     const result = await this.request(
-      `${config.ALIYUN_COMPATIBLE_BASE_URL.replace(/\/$/, '')}/chat/completions`,
+      `${baseUrl!.replace(/\/$/, '')}/chat/completions`,
       {
-        model: config.ALIYUN_ASR_MODEL,
+        model,
         messages: [
           {
             role: 'user',
@@ -138,7 +144,7 @@ class AliyunTranslationProvider implements TranslationProvider {
     if (!text) throw new AppError(422, 'ASR_NO_SPEECH', '未识别到有效语音');
     return {
       text,
-      provider: config.ALIYUN_ASR_MODEL,
+      provider: model!,
       ...(result.requestId ? { requestId: result.requestId } : {}),
     };
   }
@@ -149,12 +155,16 @@ class AliyunTranslationProvider implements TranslationProvider {
     targetLanguage: 'zh' | 'ru';
     terms: TranslationTerm[];
   }): Promise<{ text: string; provider: string; requestId?: string }> {
+    const [baseUrl, model] = await Promise.all([
+      serviceConfiguration('ALIYUN_COMPATIBLE_BASE_URL'),
+      serviceConfiguration('ALIYUN_TRANSLATION_MODEL'),
+    ]);
     const languageName = (language: 'zh' | 'ru') =>
       language === 'zh' ? 'Chinese' : 'Russian';
     const result = await this.request(
-      `${config.ALIYUN_COMPATIBLE_BASE_URL.replace(/\/$/, '')}/chat/completions`,
+      `${baseUrl!.replace(/\/$/, '')}/chat/completions`,
       {
-        model: config.ALIYUN_TRANSLATION_MODEL,
+        model,
         messages: [{ role: 'user', content: input.text }],
         translation_options: {
           source_lang: languageName(input.sourceLanguage),
@@ -167,7 +177,7 @@ class AliyunTranslationProvider implements TranslationProvider {
     if (!text) throw new AppError(502, 'MT_FAILED', '翻译服务未返回译文');
     return {
       text,
-      provider: config.ALIYUN_TRANSLATION_MODEL,
+      provider: model!,
       ...(result.requestId ? { requestId: result.requestId } : {}),
     };
   }
@@ -176,12 +186,15 @@ class AliyunTranslationProvider implements TranslationProvider {
     text: string;
     language: 'zh' | 'ru';
   }): Promise<{ audioUrl: string; provider: string; requestId?: string }> {
-    const voice =
-      input.language === 'zh' ? config.ALIYUN_TTS_VOICE_ZH : config.ALIYUN_TTS_VOICE_RU;
+    const [baseUrl, model, voice] = await Promise.all([
+      serviceConfiguration('ALIYUN_DASHSCOPE_BASE_URL'),
+      serviceConfiguration('ALIYUN_TTS_MODEL'),
+      serviceConfiguration(input.language === 'zh' ? 'ALIYUN_TTS_VOICE_ZH' : 'ALIYUN_TTS_VOICE_RU'),
+    ]);
     const result = await this.request(
-      `${config.ALIYUN_DASHSCOPE_BASE_URL.replace(/\/$/, '')}/services/aigc/multimodal-generation/generation`,
+      `${baseUrl!.replace(/\/$/, '')}/services/aigc/multimodal-generation/generation`,
       {
-        model: config.ALIYUN_TTS_MODEL,
+        model,
         input: {
           text: input.text,
           language_type: input.language === 'zh' ? 'Chinese' : 'Russian',
@@ -193,7 +206,7 @@ class AliyunTranslationProvider implements TranslationProvider {
     if (!audioUrl) throw new AppError(502, 'TTS_FAILED', '语音服务未返回音频');
     return {
       audioUrl,
-      provider: config.ALIYUN_TTS_MODEL,
+      provider: model!,
       ...(result.requestId ? { requestId: result.requestId } : {}),
     };
   }

@@ -5,6 +5,7 @@ const productionSecrets = {
   JWT_ACCESS_SECRET: 'production-access-secret-0000000000000001',
   JWT_REFRESH_SECRET: 'production-refresh-secret-00000000000001',
   PASSWORD_PEPPER: 'production-password-pepper-0001',
+  SERVICE_CONFIG_MASTER_KEY: 'production-service-config-master-key-0001',
   DATABASE_URL:
     'postgresql://translator:secret@db.internal:5432/translator?schema=public&sslmode=require',
   REDIS_URL: 'rediss://redis.internal:6380',
@@ -72,14 +73,28 @@ describe('production configuration guards', () => {
     );
   });
 
-  it('requires an API key for the Aliyun provider in production', () => {
-    expect(() =>
-      loadConfig({
-        NODE_ENV: 'production',
-        TRANSLATION_PROVIDER: 'aliyun',
-        ...productionSecrets,
-      }),
-    ).toThrow('ALIYUN_API_KEY is required');
+  it('allows external credentials to be supplied by encrypted administrator configuration', () => {
+    const parsed = loadConfig({
+      NODE_ENV: 'production',
+      TRANSLATION_PROVIDER: 'aliyun',
+      ...productionSecrets,
+      ALIYUN_API_KEY: '',
+      RESEND_API_KEY: '',
+      S3_ACCESS_KEY_ID: '',
+      S3_SECRET_ACCESS_KEY: '',
+    });
+    expect(parsed.ALIYUN_API_KEY).toBeUndefined();
+    expect(parsed.SERVICE_CONFIG_MASTER_KEY).toBeTruthy();
+  });
+
+  it('allows the S3 endpoint itself to come from administrator configuration', () => {
+    const parsed = loadConfig({
+      NODE_ENV: 'production',
+      TRANSLATION_PROVIDER: 'aliyun',
+      ...productionSecrets,
+      S3_ENDPOINT: '',
+    });
+    expect(parsed.S3_ENDPOINT).toBeUndefined();
   });
 
   it('refuses the fixed mock translator in production', () => {
