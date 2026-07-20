@@ -164,6 +164,22 @@ final class AuthRepository {
     return AuthSession.fromJson(payload);
   }
 
+  Future<AuthSession> updatePreferences({
+    required String interfaceLanguage,
+    required bool autoPlayTranslationAudio,
+    required double translationPlaybackSpeed,
+  }) async {
+    final payload = await _api.patchMap(
+      '/auth/profile',
+      data: {
+        'interfaceLanguage': interfaceLanguage,
+        'autoPlayTranslationAudio': autoPlayTranslationAudio,
+        'translationPlaybackSpeed': translationPlaybackSpeed,
+      },
+    );
+    return AuthSession.fromJson(payload);
+  }
+
   Future<void> changePassword({
     required String currentPassword,
     required String newPassword,

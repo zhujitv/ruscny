@@ -60,6 +60,9 @@ final appPreferencesProvider = Provider<AppPreferences>(
   (ref) => AppPreferences(ref.watch(localDatabaseProvider)),
 );
 
+/// Forces account-backed preferences to be reloaded after login or restore.
+final accountPreferenceRevisionProvider = StateProvider<int>((_) => 0);
+
 final audioPlaybackProvider = Provider<AudioPlaybackQueue>((ref) {
   final playback = AudioPlaybackQueue(
     accessToken: ref.watch(secureTokenStoreProvider).readAccessToken,

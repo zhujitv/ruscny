@@ -109,9 +109,12 @@ final class SettingsPage extends ConsumerWidget {
                 ],
                 onChanged: (value) {
                   if (value != null) {
-                    ref
-                        .read(settingsControllerProvider.notifier)
-                        .setLanguageMode(value);
+                    _savePreference(
+                      context,
+                      () => ref
+                          .read(settingsControllerProvider.notifier)
+                          .setLanguageMode(value),
+                    );
                   }
                 },
               ),
@@ -127,9 +130,12 @@ final class SettingsPage extends ConsumerWidget {
                   title: const AppText('自动播放最终译文'),
                   subtitle: const AppText('临时识别内容不会播放'),
                   value: settings.valueOrNull?.autoPlay ?? true,
-                  onChanged: (value) => ref
-                      .read(settingsControllerProvider.notifier)
-                      .setAutoPlay(value),
+                  onChanged: (value) => _savePreference(
+                    context,
+                    () => ref
+                        .read(settingsControllerProvider.notifier)
+                        .setAutoPlay(value),
+                  ),
                 ),
                 const Divider(height: 1),
                 ListTile(
@@ -146,9 +152,12 @@ final class SettingsPage extends ConsumerWidget {
                         .toList(growable: false),
                     onChanged: (value) {
                       if (value != null) {
-                        ref
-                            .read(settingsControllerProvider.notifier)
-                            .setPlaybackSpeed(value);
+                        _savePreference(
+                          context,
+                          () => ref
+                              .read(settingsControllerProvider.notifier)
+                              .setPlaybackSpeed(value),
+                        );
                       }
                     },
                   ),
@@ -255,6 +264,21 @@ final class SettingsPage extends ConsumerWidget {
         'guest' => '临时访客',
         _ => '客户',
       };
+
+  Future<void> _savePreference(
+    BuildContext context,
+    Future<void> Function() save,
+  ) async {
+    try {
+      await save();
+    } catch (error) {
+      if (context.mounted) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: AppText(readableError(error))),
+        );
+      }
+    }
+  }
 
   Future<void> _logout(BuildContext context, WidgetRef ref) async {
     final confirmed = await showDialog<bool>(

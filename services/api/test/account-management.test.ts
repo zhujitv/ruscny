@@ -24,6 +24,7 @@ const mocks = vi.hoisted(() => {
         findUniqueOrThrow: vi.fn(),
         updateMany: vi.fn(),
       },
+      userDevice: { findMany: vi.fn(), updateMany: vi.fn() },
       systemSetting: { findUnique: vi.fn() },
     },
   };
@@ -86,6 +87,8 @@ beforeEach(() => {
   mocks.transaction.userPasswordResetToken.updateMany.mockResolvedValue({ count: 1 });
   mocks.transaction.adminPasswordResetToken.updateMany.mockResolvedValue({ count: 1 });
   mocks.prisma.user.updateMany.mockResolvedValue({ count: 1 });
+  mocks.prisma.userDevice.findMany.mockResolvedValue([]);
+  mocks.prisma.userDevice.updateMany.mockResolvedValue({ count: 1 });
 });
 
 afterEach(async () => {
@@ -221,5 +224,54 @@ describe('personal account management', () => {
     expect(response.statusCode).toBe(400);
     expect(response.json().code).toBe('VALIDATION_ERROR');
     expect(mocks.prisma.user.updateMany).not.toHaveBeenCalled();
+  });
+
+  it('lists account devices and marks the authenticated browser as current', async () => {
+    const now = new Date('2026-07-20T08:00:00.000Z');
+    mocks.prisma.userDevice.findMany.mockResolvedValue([
+      {
+        deviceId: 'device-current',
+        platform: 'UNKNOWN',
+        createdAt: now,
+        lastSeenAt: now,
+        revokedAt: null,
+      },
+      {
+        deviceId: 'device-phone',
+        platform: 'ANDROID',
+        createdAt: now,
+        lastSeenAt: now,
+        revokedAt: null,
+      },
+    ]);
+    app = await createApp();
+
+    const response = await app.inject({ method: 'GET', url: '/v1/auth/devices' });
+
+    expect(response.statusCode).toBe(200);
+    expect(response.json().data).toEqual([
+      expect.objectContaining({ deviceId: 'device-current', isCurrent: true }),
+      expect.objectContaining({ deviceId: 'device-phone', isCurrent: false }),
+    ]);
+  });
+
+  it('revokes only a device belonging to the authenticated account', async () => {
+    app = await createApp();
+
+    const response = await app.inject({
+      method: 'DELETE',
+      url: '/v1/auth/devices/device-phone',
+    });
+
+    expect(response.statusCode).toBe(200);
+    expect(mocks.prisma.userDevice.updateMany).toHaveBeenCalledWith({
+      where: { userId: 'user-a', deviceId: 'device-phone' },
+      data: {
+        revokedAt: expect.any(Date),
+        refreshTokenHash: null,
+        refreshTokenJti: null,
+      },
+    });
+    expect(mocks.disconnectDevice).toHaveBeenCalledWith('user-a', 'device-phone');
   });
 });

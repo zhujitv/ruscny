@@ -1,6 +1,8 @@
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../../core/auth/auth_repository.dart';
+import '../../core/cache/app_preferences.dart';
+import '../../core/localization/app_localization.dart';
 import '../../core/models.dart';
 import '../../core/providers.dart';
 import '../../core/utils/transcript_exporter.dart';
@@ -13,6 +15,9 @@ final class AuthController extends AsyncNotifier<AuthSession?> {
   Future<AuthSession?> build() async {
     await TranscriptExporter.clearTemporaryFiles();
     final session = await ref.read(authRepositoryProvider).restore();
+    if (session != null && session.role != UserRole.guest) {
+      await _saveAccountPreferences(session);
+    }
     if (session == null) {
       // An expired/revoked credential must not leave another user's meeting
       // cache available to the next account that signs in on this device.
@@ -29,9 +34,13 @@ final class AuthController extends AsyncNotifier<AuthSession?> {
   Future<bool> login({required String email, required String password}) async {
     state = const AsyncLoading();
     state = await AsyncValue.guard(
-      () => ref
-          .read(authRepositoryProvider)
-          .login(email: email, password: password),
+      () async {
+        final session = await ref
+            .read(authRepositoryProvider)
+            .login(email: email, password: password);
+        await _saveAccountPreferences(session);
+        return session;
+      },
     );
     return !state.hasError;
   }
@@ -100,6 +109,38 @@ final class AuthController extends AsyncNotifier<AuthSession?> {
           avatarPreset: avatarPreset,
         );
     state = AsyncData(updated);
+  }
+
+  Future<void> updatePreferences({
+    required AppLanguageMode languageMode,
+    required bool autoPlay,
+    required double playbackSpeed,
+  }) async {
+    final current = state.valueOrNull;
+    if (current == null || current.role == UserRole.guest) return;
+    final updated = await ref.read(authRepositoryProvider).updatePreferences(
+          interfaceLanguage: languageMode.name,
+          autoPlayTranslationAudio: autoPlay,
+          translationPlaybackSpeed: playbackSpeed,
+        );
+    state = AsyncData(updated);
+  }
+
+  Future<void> _saveAccountPreferences(AuthSession session) async {
+    try {
+      await ref.read(appPreferencesProvider).save(
+            AppSettings(
+              autoPlay: session.autoPlayTranslationAudio,
+              playbackSpeed: session.translationPlaybackSpeed,
+              languageMode: AppLanguageMode.parse(session.interfaceLanguage),
+            ),
+          );
+      ref.read(accountPreferenceRevisionProvider.notifier).state++;
+    } catch (_) {
+      // A damaged device cache must not turn a valid server login into an
+      // authentication failure. The account values remain authoritative and
+      // will be applied again after the local cache becomes available.
+    }
   }
 
   Future<bool> deleteAccount({String? password}) async {

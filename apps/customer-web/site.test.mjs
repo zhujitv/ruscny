@@ -186,7 +186,23 @@ test('signed-in account management includes profile, preferences, avatar and pas
   assert.match(source, /sessionStorage/);
   assert.match(source, /INVALID_CURRENT_PASSWORD/);
   assert.match(source, /PASSWORD_UNCHANGED/);
+  assert.match(page, /id="device-list"/);
+  assert.match(source, /'\/v1\/auth\/devices'/);
+  assert.match(source, /\/v1\/auth\/devices\/\$\{encodeURIComponent\(targetDeviceId\)\}/);
   assert.doesNotMatch(source, /localStorage[^\n]*accessToken|localStorage[^\n]*refreshToken/);
+});
+
+test('homepage describes account security and cross-device preference sync', async () => {
+  const [home, source] = await Promise.all([
+    readFile(new URL('index.html', directory), 'utf8'),
+    readFile(new URL('app.js', directory), 'utf8'),
+  ]);
+
+  assert.match(home, /class="account-sync-card"/);
+  assert.match(home, /data-i18n="accountSyncItem3"/);
+  assert.match(source, /邮箱激活与密码找回/);
+  assert.match(source, /登录设备查看与远程下线/);
+  assert.match(source, /Просмотр и удалённое отключение устройств/);
 });
 
 test('social preview has the expected link-unfurl dimensions', async () => {

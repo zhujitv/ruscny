@@ -122,16 +122,19 @@ void main() {
     expect(await tokenStore.readRefreshToken(), 'user-refresh');
   });
 
-  test('profile avatar and password changes use authenticated account APIs',
+  test(
+      'profile preferences and password changes use authenticated account APIs',
       () async {
     final tokenStore = SecureTokenStore();
-    final requests = <String, Map<String, dynamic>>{};
+    final requests = <MapEntry<String, Map<String, dynamic>>>[];
     final dio = Dio(BaseOptions(baseUrl: 'https://api.example.test/v1'));
     dio.interceptors.add(
       InterceptorsWrapper(
         onRequest: (options, handler) {
-          requests[options.path] =
-              (options.data as Map).cast<String, dynamic>();
+          requests.add(MapEntry(
+            options.path,
+            (options.data as Map).cast<String, dynamic>(),
+          ));
           handler.resolve(
             Response<dynamic>(
               requestOptions: options,
@@ -144,6 +147,14 @@ void main() {
                         'role': 'USER',
                         'displayName': '王伟',
                         'avatarPreset': 'ocean',
+                        'interfaceLanguage':
+                            (options.data as Map)['interfaceLanguage'] ?? 'zh',
+                        'autoPlayTranslationAudio':
+                            (options.data as Map)['autoPlayTranslationAudio'] ??
+                                true,
+                        'translationPlaybackSpeed':
+                            (options.data as Map)['translationPlaybackSpeed'] ??
+                                1,
                       }
                     : <String, dynamic>{},
               },
@@ -165,19 +176,33 @@ void main() {
       displayName: '王伟',
       avatarPreset: 'ocean',
     );
+    final preferences = await repository.updatePreferences(
+      interfaceLanguage: 'ru',
+      autoPlayTranslationAudio: false,
+      translationPlaybackSpeed: 1.25,
+    );
     await repository.changePassword(
       currentPassword: 'current-password',
       newPassword: 'different-password',
     );
 
-    final profileRequest = requests.entries
-        .singleWhere((entry) => entry.key.endsWith('/auth/profile'))
-        .value;
-    final passwordRequest = requests.entries
+    final profileRequests = requests
+        .where((entry) => entry.key.endsWith('/auth/profile'))
+        .map((entry) => entry.value)
+        .toList();
+    final passwordRequest = requests
         .singleWhere((entry) => entry.key.endsWith('/auth/password/change'))
         .value;
     expect(session.avatarPreset, 'ocean');
-    expect(profileRequest['avatarPreset'], 'ocean');
+    expect(profileRequests.first['avatarPreset'], 'ocean');
+    expect(profileRequests.last, {
+      'interfaceLanguage': 'ru',
+      'autoPlayTranslationAudio': false,
+      'translationPlaybackSpeed': 1.25,
+    });
+    expect(preferences.interfaceLanguage, 'ru');
+    expect(preferences.autoPlayTranslationAudio, isFalse);
+    expect(preferences.translationPlaybackSpeed, 1.25);
     expect(passwordRequest, {
       'currentPassword': 'current-password',
       'newPassword': 'different-password',
