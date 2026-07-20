@@ -53,7 +53,9 @@ export async function findInvitation(input: {
   const conversation = roomTokenHash
     ? await prisma.conversation.findUnique({ where: { roomTokenHash } })
     : await prisma.conversation.findUnique({ where: { roomCodeHash: roomCodeHash! } });
-  if (!conversation) throw notFound('ROOM_NOT_FOUND', '房间不存在');
+  if (!conversation || conversation.kind !== 'MEETING') {
+    throw notFound('ROOM_NOT_FOUND', '房间不存在');
+  }
   const now = new Date();
   if (
     conversation.status === 'ENDED' ||
@@ -103,9 +105,12 @@ export function invitationCredentialHashes(input: {
 }
 
 export function assertLockedInvitationCredential(
-  conversation: Pick<Conversation, 'roomTokenHash' | 'roomCodeHash'>,
+  conversation: Pick<Conversation, 'kind' | 'roomTokenHash' | 'roomCodeHash'>,
   input: { roomToken?: string; roomCode?: string },
 ): void {
+  if (conversation.kind !== 'MEETING') {
+    throw notFound('ROOM_NOT_FOUND', '房间不存在');
+  }
   const { roomTokenHash, roomCodeHash } = invitationCredentialHashes(input);
   const matches = roomTokenHash
     ? conversation.roomTokenHash === roomTokenHash
@@ -304,21 +309,101 @@ export async function getParticipant(
   return participant;
 }
 
+type DirectConversationAccess = Pick<Conversation, 'kind' | 'directPairKey'>;
+
+export async function assertDirectConversationLiveAccess(
+  auth: AuthContext,
+  conversation: DirectConversationAccess,
+): Promise<void> {
+  return prisma.$transaction((tx) =>
+    assertDirectConversationLiveAccessInTransaction(tx, auth, conversation),
+  );
+}
+
+export async function assertDirectConversationLiveAccessInTransaction(
+  tx: Prisma.TransactionClient,
+  auth: AuthContext,
+  conversation: DirectConversationAccess,
+): Promise<void> {
+  if (conversation.kind !== 'DIRECT') return;
+  if (auth.role === 'GUEST') {
+    throw forbidden('FORMAL_ACCOUNT_REQUIRED', '好友私聊只支持正式账号');
+  }
+  const [userAId, userBId, extra] = conversation.directPairKey?.split(':') ?? [];
+  if (
+    !userAId ||
+    !userBId ||
+    extra ||
+    (auth.subjectId !== userAId && auth.subjectId !== userBId)
+  ) {
+    throw forbidden('DIRECT_CHAT_INVALID', '好友私聊关系无效');
+  }
+  const friendship = await tx.friendship.findUnique({
+    where: { userAId_userBId: { userAId, userBId } },
+    select: { id: true },
+  });
+  if (!friendship) {
+    throw forbidden('FRIEND_REQUIRED', '好友关系已解除，不能继续实时私聊');
+  }
+}
+
 export function conversationDto(
   conversation: ConversationWithContact,
   invitation?: { roomToken: string; roomCode: string; inviteUrl: string },
+  viewerUserId?: string,
 ) {
+  const directPairIds = conversation.directPairKey?.split(':') ?? [];
+  const directPeerUserId = conversation.kind === 'DIRECT' && viewerUserId
+    ? directPairIds.length === 2
+      ? directPairIds.find((id) => id !== viewerUserId)
+      : undefined
+    : undefined;
+  const directPeer = conversation.kind === 'DIRECT' && viewerUserId
+    ? conversation.participants.find(
+        (participant) => participant.userId === directPeerUserId,
+      ) ?? conversation.participants.find(
+        (participant) => participant.userId == null,
+      )
+    : undefined;
+  const displayedContact = directPeer
+    ? {
+        id: directPeer.userId ?? directPeerUserId ?? directPeer.id,
+        displayName: directPeer.displayName,
+        company: directPeer.company ?? null,
+      }
+    : conversation.contact;
   return {
     id: conversation.id,
+    kind: conversation.kind,
     ownerId: conversation.ownerId,
     contactId: conversation.contactId,
     title: conversation.title,
     hostLanguage: conversation.hostLanguage,
     guestLanguage: conversation.guestLanguage,
     status: conversation.status,
-    roomToken: invitation?.roomToken ?? '',
-    roomCode: invitation?.roomCode ?? '',
-    inviteUrl: invitation?.inviteUrl,
+    roomToken: conversation.kind === 'MEETING' ? (invitation?.roomToken ?? '') : '',
+    roomCode: conversation.kind === 'MEETING' ? (invitation?.roomCode ?? '') : '',
+    inviteUrl: conversation.kind === 'MEETING' ? invitation?.inviteUrl : undefined,
+    capabilities: {
+      invitations: conversation.kind === 'MEETING',
+      participantManagement: conversation.kind === 'MEETING',
+      documentExport: conversation.kind === 'MEETING',
+      aiSummary: conversation.kind === 'MEETING',
+      summaryDistribution: conversation.kind === 'MEETING',
+    },
+    directPeer: directPeer
+      ? {
+          id: directPeer.userId ?? directPeerUserId ?? directPeer.id,
+          displayName: directPeer.displayName,
+          company: directPeer.company ?? null,
+          preferredLanguage: directPeer.preferredLanguage,
+          presence: directPeer.removedAt
+            ? 'REMOVED'
+            : directPeer.leftAt
+              ? 'LEFT'
+              : directPeer.presence,
+        }
+      : null,
     guestHistoryPolicy: conversation.guestHistoryPolicy,
     guestAccessExpiresAt: conversation.guestAccessExpiresAt,
     expiresAt: conversation.expiresAt,
@@ -326,9 +411,9 @@ export function conversationDto(
     endedAt: conversation.endedAt,
     createdAt: conversation.createdAt,
     updatedAt: conversation.updatedAt,
-    contact: conversation.contact,
-    contactName: conversation.contact.displayName,
-    company: conversation.contact.company,
+    contact: displayedContact,
+    contactName: displayedContact.displayName,
+    company: displayedContact.company,
     messageCount: conversation._count.messages,
     participantCount: conversation._count.participants,
     participants: conversation.participants.map(participantDto),

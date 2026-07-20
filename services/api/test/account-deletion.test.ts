@@ -177,6 +177,15 @@ describe('account deletion preserves shared meeting records', () => {
       where: { userId: 'user-a' },
       data: expect.objectContaining({ userId: null, presence: 'LEFT' }),
     });
+    expect(mocks.transaction.contact.updateMany).toHaveBeenCalledWith({
+      where: { linkedUserId: 'user-a' },
+      data: {
+        linkedUserId: null,
+        displayName: 'Deleted user user-a',
+        company: null,
+        email: null,
+      },
+    });
     expect(mocks.disconnectSubject).toHaveBeenCalledWith('user-a');
   });
 

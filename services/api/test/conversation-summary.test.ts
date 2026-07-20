@@ -158,6 +158,63 @@ afterEach(async () => {
 });
 
 describe('server-attributed meeting summary', () => {
+  it('rejects AI summary generation for a friend direct chat', async () => {
+    mocks.getConversationForAuth.mockResolvedValueOnce({
+      id: 'conversation-a',
+      kind: 'DIRECT',
+      ownerId: 'host-a',
+      status: 'ACTIVE',
+    });
+
+    const response = await app!.inject({
+      method: 'POST',
+      url: '/v1/conversations/conversation-a/summary',
+      headers: { 'idempotency-key': 'direct-chat-summary' },
+      payload: {},
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json().code).toBe('DIRECT_CHAT_DOCUMENTS_UNAVAILABLE');
+    expect(mocks.prisma.summaryGeneration.create).not.toHaveBeenCalled();
+    expect(mocks.prisma.conversationSummary.upsert).not.toHaveBeenCalled();
+  });
+
+  it('rejects reading a summary for a friend direct chat', async () => {
+    mocks.getConversationForAuthInTransaction.mockResolvedValueOnce({
+      id: 'conversation-a',
+      kind: 'DIRECT',
+      ownerId: 'host-a',
+      status: 'ACTIVE',
+    });
+
+    const response = await app!.inject({
+      method: 'GET',
+      url: '/v1/conversations/conversation-a/summary',
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json().code).toBe('DIRECT_CHAT_DOCUMENTS_UNAVAILABLE');
+    expect(mocks.prisma.conversationSummary.findUnique).not.toHaveBeenCalled();
+  });
+
+  it('rejects document export for a friend direct chat', async () => {
+    mocks.getConversationForAuth.mockResolvedValueOnce({
+      id: 'conversation-a',
+      kind: 'DIRECT',
+      ownerId: 'host-a',
+      status: 'ACTIVE',
+    });
+
+    const response = await app!.inject({
+      method: 'GET',
+      url: '/v1/conversations/conversation-a/export?format=txt',
+    });
+
+    expect(response.statusCode).toBe(403);
+    expect(response.json().code).toBe('DIRECT_CHAT_DOCUMENTS_UNAVAILABLE');
+    expect(mocks.prisma.translationMessage.findMany).not.toHaveBeenCalled();
+  });
+
   it('rejects client-supplied coreDiscussion snapshots', async () => {
     const response = await app!.inject({
       method: 'POST',

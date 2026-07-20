@@ -41,6 +41,7 @@ const mocks = vi.hoisted(() => ({
   },
   validateAuthContext: vi.fn(),
   getConversationForAuth: vi.fn(),
+  assertDirectConversationLiveAccess: vi.fn(),
   getParticipant: vi.fn(),
   recoverStaleProcessingMessages: vi.fn(),
   setRealtimeHub: vi.fn(),
@@ -64,6 +65,7 @@ vi.mock('../src/lib/tokens.js', () => ({ verifyAccessToken: vi.fn() }));
 vi.mock('../src/realtime-hub.js', () => ({ setRealtimeHub: mocks.setRealtimeHub }));
 vi.mock('../src/services/conversations.js', () => ({
   getConversationForAuth: mocks.getConversationForAuth,
+  assertDirectConversationLiveAccess: mocks.assertDirectConversationLiveAccess,
   getParticipant: mocks.getParticipant,
   messageDto: (message: unknown) => message,
   participantDto: (value: unknown) => value,

@@ -4,7 +4,7 @@ import { z } from 'zod';
 import { authenticate } from '../auth.js';
 import { prisma } from '../db.js';
 import { conflict, forbidden, notFound } from '../errors.js';
-import { stableHash } from '../lib/crypto.js';
+import { randomRoomCode, randomToken, stableHash } from '../lib/crypto.js';
 import { realtimeHub } from '../realtime-hub.js';
 import {
   conversationDto,
@@ -232,20 +232,185 @@ export async function registerSocialRoutes(app: FastifyInstance): Promise<void> 
     assertRegistered(request.auth.role);
     const { friendId } = z.object({ friendId: z.string() }).parse(request.params);
     const [userAId, userBId] = canonicalPair(request.auth.subjectId, friendId);
-    const removed = await prisma.friendship.deleteMany({ where: { userAId, userBId } });
-    if (!removed.count) throw notFound('FRIEND_NOT_FOUND', '好友不存在');
-    await prisma.friendRequest.deleteMany({
-      where: {
-        OR: [
-          { senderId: request.auth.subjectId, receiverId: friendId },
-          { senderId: friendId, receiverId: request.auth.subjectId },
-        ],
-      },
+    const directChat = await prisma.$transaction(async (tx) => {
+      await lockUserRows(tx, [userAId, userBId]);
+      const conversation = await tx.conversation.findUnique({
+        where: { directPairKey: `${userAId}:${userBId}` },
+        select: {
+          id: true,
+          participants: {
+            where: { userId: { in: [userAId, userBId] } },
+            select: { id: true },
+          },
+        },
+      });
+      const removed = await tx.friendship.deleteMany({ where: { userAId, userBId } });
+      if (!removed.count) throw notFound('FRIEND_NOT_FOUND', '好友不存在');
+      await tx.friendRequest.deleteMany({
+        where: {
+          OR: [
+            { senderId: request.auth.subjectId, receiverId: friendId },
+            { senderId: friendId, receiverId: request.auth.subjectId },
+          ],
+        },
+      });
+      return conversation;
     });
     realtimeHub().emitToSubject(friendId, 'friend.removed', {
       userId: request.auth.subjectId,
     });
+    if (directChat) {
+      await Promise.all(
+        directChat.participants.map((participant) =>
+          realtimeHub().disconnectDirectChatParticipant(
+            directChat.id,
+            participant.id,
+          )),
+      );
+    }
     return { ok: true, data: { friendId } };
+  });
+
+  app.post(
+    '/v1/direct-chats/:friendId',
+    {
+      preHandler: authenticate,
+      config: { rateLimit: subjectCredentialRateLimit(20) },
+    },
+    async (request) => {
+      assertRegistered(request.auth.role);
+      const { friendId } = z.object({ friendId: z.string().min(1) }).parse(request.params);
+      if (friendId === request.auth.subjectId) {
+        throw conflict('CANNOT_CHAT_WITH_SELF', '不能和自己创建私聊');
+      }
+      const [userAId, userBId] = canonicalPair(request.auth.subjectId, friendId);
+      const directPairKey = `${userAId}:${userBId}`;
+      const conversation = await prisma.$transaction(async (tx) => {
+        await assertActiveUsersLocked(tx, [userAId, userBId]);
+        const friendships = await tx.$queryRaw<Array<{ id: string }>>`
+          SELECT "id"
+          FROM "Friendship"
+          WHERE "userAId" = ${userAId} AND "userBId" = ${userBId}
+          FOR SHARE
+        `;
+        if (!friendships[0]) throw forbidden('FRIEND_REQUIRED', '只能和好友直接聊天');
+        const existing = await tx.conversation.findUnique({
+          where: { directPairKey },
+          include: conversationInclude,
+        });
+        if (existing) return existing;
+
+        const profiles = await tx.user.findMany({
+          where: { id: { in: [userAId, userBId] }, status: 'ACTIVE' },
+          select: {
+            id: true,
+            displayName: true,
+            company: true,
+            email: true,
+            preferredLanguage: true,
+          },
+        });
+        const profileById = new Map(profiles.map((profile) => [profile.id, profile]));
+        const owner = profileById.get(request.auth.subjectId);
+        const friend = profileById.get(friendId);
+        if (!owner || !friend) throw notFound('USER_NOT_FOUND', '用户不存在');
+        const existingContact = await tx.contact.findFirst({
+          where: { ownerId: owner.id, linkedUserId: friend.id },
+          orderBy: { createdAt: 'asc' },
+        });
+        const contact = existingContact ?? await tx.contact.create({
+          data: {
+            ownerId: owner.id,
+            linkedUserId: friend.id,
+            displayName: friend.displayName,
+            company: friend.company,
+            email: friend.email?.toLowerCase() ?? null,
+          },
+        });
+        const now = new Date();
+        const created = await tx.conversation.create({
+          data: {
+            kind: 'DIRECT',
+            directPairKey,
+            ownerId: owner.id,
+            contactId: contact.id,
+            title: null,
+            hostLanguage: owner.preferredLanguage,
+            guestLanguage: friend.preferredLanguage,
+            status: 'ACTIVE',
+            roomTokenHash: stableHash(randomToken(24)),
+            roomCodeHash: stableHash(randomRoomCode()),
+            guestHistoryPolicy: 'PERMANENT',
+            expiresAt: new Date('9999-12-31T23:59:59.999Z'),
+            startedAt: now,
+            participants: {
+              create: [
+                {
+                  userId: owner.id,
+                  role: 'HOST',
+                  displayName: owner.displayName,
+                  company: owner.company,
+                  email: owner.email?.toLowerCase() ?? null,
+                  preferredLanguage: owner.preferredLanguage,
+                  presence: 'OFFLINE',
+                  lastSeenAt: now,
+                },
+                {
+                  userId: friend.id,
+                  role: 'GUEST',
+                  displayName: friend.displayName,
+                  company: friend.company,
+                  email: friend.email?.toLowerCase() ?? null,
+                  preferredLanguage: friend.preferredLanguage,
+                  presence: 'OFFLINE',
+                  lastSeenAt: now,
+                },
+              ],
+            },
+          },
+          include: conversationInclude,
+        });
+        return created;
+      });
+      realtimeHub().emitToSubject(friendId, 'direct.chat.ready', {
+        conversationId: conversation.id,
+      });
+      return {
+        ok: true,
+        data: {
+          conversation: conversationDto(
+            conversation,
+            undefined,
+            request.auth.subjectId,
+          ),
+        },
+      };
+    },
+  );
+
+  app.get('/v1/direct-chats', { preHandler: authenticate }, async (request) => {
+    assertRegistered(request.auth.role);
+    const rows = await prisma.conversation.findMany({
+      where: {
+        kind: 'DIRECT',
+        participants: {
+          some: {
+            userId: request.auth.subjectId,
+            removedAt: null,
+          },
+        },
+      },
+      include: conversationInclude,
+      orderBy: { updatedAt: 'desc' },
+      take: 100,
+    });
+    return {
+      ok: true,
+      data: {
+        items: rows.map((conversation) =>
+          conversationDto(conversation, undefined, request.auth.subjectId)),
+      },
+    };
   });
 
   app.post(
@@ -258,7 +423,7 @@ export async function registerSocialRoutes(app: FastifyInstance): Promise<void> 
       const [userAId, userBId] = canonicalPair(request.auth.subjectId, inviteeId);
       const invitation = await prisma.$transaction(async (tx) => {
         const rows = await tx.$queryRaw<LockedSocialConversation[]>`
-          SELECT "id", "ownerId", "status", "expiresAt", "startedAt"
+          SELECT "id", "ownerId", "status", "expiresAt", "startedAt", "kind"
           FROM "Conversation"
           WHERE "id" = ${id}
           FOR UPDATE
@@ -266,6 +431,9 @@ export async function registerSocialRoutes(app: FastifyInstance): Promise<void> 
         const conversation = rows[0];
         if (!conversation || conversation.ownerId !== request.auth.subjectId) {
           throw notFound('CONVERSATION_NOT_FOUND', '会议不存在');
+        }
+        if (conversation.kind === 'DIRECT') {
+          throw forbidden('DIRECT_CHAT_INVITATIONS_UNAVAILABLE', '好友私聊不支持会议邀请');
         }
         const now = new Date();
         if (
@@ -367,13 +535,16 @@ export async function registerSocialRoutes(app: FastifyInstance): Promise<void> 
         // invitation creation and participant removal.  This prevents an
         // ACCEPT from changing an ENDED conversation back to ACTIVE.
         const rows = await tx.$queryRaw<LockedSocialConversation[]>`
-          SELECT "id", "ownerId", "status", "expiresAt", "startedAt"
+          SELECT "id", "ownerId", "status", "expiresAt", "startedAt", "kind"
           FROM "Conversation"
           WHERE "id" = ${invitation.conversationId}
           FOR UPDATE
         `;
         const conversation = rows[0];
         if (!conversation) throw notFound('CONVERSATION_NOT_FOUND', '会议不存在');
+        if (conversation.kind === 'DIRECT') {
+          throw forbidden('DIRECT_CHAT_INVITATIONS_UNAVAILABLE', '好友私聊不支持会议邀请');
+        }
         if (
           (conversation.status !== 'WAITING' && conversation.status !== 'ACTIVE') ||
           conversation.expiresAt <= now
@@ -475,6 +646,7 @@ interface LockedSocialConversation {
   status: string;
   expiresAt: Date;
   startedAt: Date | null;
+  kind: 'MEETING' | 'DIRECT';
 }
 
 function assertRegistered(role: string): void {
@@ -519,17 +691,25 @@ async function assertActiveUsersLocked(
   tx: Prisma.TransactionClient,
   userIds: string[],
 ): Promise<void> {
+  const users = await lockUserRows(tx, userIds);
+  if (users.length !== new Set(userIds).size || users.some((user) => user.status !== 'ACTIVE')) {
+    throw notFound('USER_NOT_FOUND', '用户不存在');
+  }
+}
+
+async function lockUserRows(
+  tx: Prisma.TransactionClient,
+  userIds: string[],
+): Promise<Array<{ id: string; status: string }>> {
   const ids = [...new Set(userIds)].sort();
-  const users = await tx.$queryRaw<Array<{ id: string; status: string }>>`
+  if (!ids.length) return [];
+  return tx.$queryRaw<Array<{ id: string; status: string }>>`
     SELECT "id", "status"
     FROM "User"
     WHERE "id" IN (${Prisma.join(ids)})
     ORDER BY "id"
     FOR UPDATE
   `;
-  if (users.length !== ids.length || users.some((user) => user.status !== 'ACTIVE')) {
-    throw notFound('USER_NOT_FOUND', '用户不存在');
-  }
 }
 
 async function relationshipStates(

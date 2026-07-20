@@ -6,6 +6,8 @@ enum UserRole { user, host, guest }
 
 enum ConversationStatus { waiting, active, ended, expired }
 
+enum ConversationKind { meeting, direct }
+
 enum GuestHistoryPolicy {
   noAccessAfterEnd,
   accessFor24Hours,
@@ -74,6 +76,11 @@ ConversationStatus _conversationStatus(dynamic value) =>
       'EXPIRED' => ConversationStatus.expired,
       _ => ConversationStatus.waiting,
     };
+
+ConversationKind _conversationKind(dynamic value) =>
+    value?.toString().toUpperCase() == 'DIRECT'
+        ? ConversationKind.direct
+        : ConversationKind.meeting;
 
 MessageStatus _messageStatus(dynamic value) =>
     switch (value?.toString().toUpperCase()) {
@@ -245,6 +252,9 @@ final class Conversation {
     this.messageCount = 0,
     this.participantCount = 1,
     this.participants = const [],
+    this.kind = ConversationKind.meeting,
+    this.directPeer,
+    this.supportsDocuments = true,
   });
 
   final String id;
@@ -265,6 +275,11 @@ final class Conversation {
   final int messageCount;
   final int participantCount;
   final List<Participant> participants;
+  final ConversationKind kind;
+  final DirectChatPeer? directPeer;
+  final bool supportsDocuments;
+
+  bool get isDirect => kind == ConversationKind.direct;
 
   // ACTIVE meetings accept every current participant. While the invitation is
   // still WAITING, only the registered owner/host may run a solo microphone
@@ -279,8 +294,9 @@ final class Conversation {
           ownerId == currentUserId);
 
   bool get canEnd =>
-      status == ConversationStatus.waiting ||
-      status == ConversationStatus.active;
+      !isDirect &&
+      (status == ConversationStatus.waiting ||
+          status == ConversationStatus.active);
 
   Conversation copyWith({
     String? title,
@@ -309,12 +325,16 @@ final class Conversation {
         messageCount: messageCount,
         participantCount: participantCount ?? this.participantCount,
         participants: participants,
+        kind: kind,
+        directPeer: directPeer,
+        supportsDocuments: supportsDocuments,
       );
 
   factory Conversation.fromJson(Map<String, dynamic> json) {
     final contact = (json['contact'] as Map?)?.cast<String, dynamic>();
     return Conversation(
       id: json['id'].toString(),
+      kind: _conversationKind(json['kind']),
       ownerId: (json['ownerId'] ?? '').toString(),
       contactId: (json['contactId'] ?? contact?['id'] ?? '').toString(),
       title: _optionalString(json['title']),
@@ -340,11 +360,21 @@ final class Conversation {
               .map((item) => Participant.fromJson(item.cast<String, dynamic>()))
               .toList(growable: false) ??
           const [],
+      directPeer: json['directPeer'] is Map
+          ? DirectChatPeer.fromJson(
+              (json['directPeer'] as Map).cast<String, dynamic>(),
+            )
+          : null,
+      supportsDocuments:
+          _conversationKind(json['kind']) == ConversationKind.meeting &&
+              (json['capabilities'] as Map?)?['aiSummary'] != false &&
+              (json['capabilities'] as Map?)?['documentExport'] != false,
     );
   }
 
   Map<String, dynamic> toJson() => {
         'id': id,
+        'kind': kind.name.toUpperCase(),
         'ownerId': ownerId,
         'contactId': contactId,
         'title': title,
@@ -362,6 +392,44 @@ final class Conversation {
         'messageCount': messageCount,
         'participantCount': participantCount,
         'participants': participants.map((item) => item.toJson()).toList(),
+        'directPeer': directPeer?.toJson(),
+        'capabilities': {
+          'aiSummary': supportsDocuments,
+          'documentExport': supportsDocuments,
+          'summaryDistribution': supportsDocuments,
+        },
+      };
+}
+
+final class DirectChatPeer {
+  const DirectChatPeer({
+    required this.id,
+    required this.displayName,
+    required this.preferredLanguage,
+    this.company,
+    this.presence,
+  });
+
+  final String id;
+  final String displayName;
+  final String? company;
+  final Language preferredLanguage;
+  final String? presence;
+
+  factory DirectChatPeer.fromJson(Map<String, dynamic> json) => DirectChatPeer(
+        id: (json['id'] ?? '').toString(),
+        displayName: (json['displayName'] ?? '').toString(),
+        company: _optionalString(json['company']),
+        preferredLanguage: _language(json['preferredLanguage']),
+        presence: _optionalString(json['presence']),
+      );
+
+  Map<String, dynamic> toJson() => {
+        'id': id,
+        'displayName': displayName,
+        'company': company,
+        'preferredLanguage': preferredLanguage.code,
+        'presence': presence,
       };
 }
 

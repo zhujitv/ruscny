@@ -4,6 +4,10 @@ export interface RealtimeHub {
   disconnectDevice(subjectId: string, deviceId: string): void;
   disconnectSubject(subjectId: string): void;
   disconnectParticipant(conversationId: string, participantId: string): Promise<boolean>;
+  disconnectDirectChatParticipant(
+    conversationId: string,
+    participantId: string,
+  ): Promise<boolean>;
   isSubjectOnline(subjectId: string): Promise<boolean>;
   isReady(): boolean;
 }
@@ -14,6 +18,7 @@ let hub: RealtimeHub = {
   disconnectDevice: () => undefined,
   disconnectSubject: () => undefined,
   disconnectParticipant: async () => true,
+  disconnectDirectChatParticipant: async () => true,
   isSubjectOnline: async () => false,
   isReady: () => true,
 };

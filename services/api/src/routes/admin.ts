@@ -193,10 +193,10 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       prisma.user.count({ where: { status: 'ACTIVE' } }),
       prisma.user.count({ where: { status: 'DISABLED' } }),
       prisma.user.count({ where: { status: { not: 'DELETED' }, createdAt: { gte: since } } }),
-      prisma.conversation.count(),
-      prisma.conversation.count({ where: { status: 'WAITING' } }),
-      prisma.conversation.count({ where: { status: 'ACTIVE' } }),
-      prisma.conversation.count({ where: { status: 'ENDED' } }),
+      prisma.conversation.count({ where: { kind: 'MEETING' } }),
+      prisma.conversation.count({ where: { kind: 'MEETING', status: 'WAITING' } }),
+      prisma.conversation.count({ where: { kind: 'MEETING', status: 'ACTIVE' } }),
+      prisma.conversation.count({ where: { kind: 'MEETING', status: 'ENDED' } }),
       prisma.participant.count({ where: { presence: 'ONLINE', removedAt: null, leftAt: null } }),
       prisma.translationMessage.count(),
       prisma.translationMessage.count({ where: { createdAt: { gte: since } } }),
@@ -266,7 +266,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
           },
         }),
         prisma.user.count({ where: { createdAt: { gte: since }, status: { not: 'DELETED' } } }),
-        prisma.conversation.count({ where: { createdAt: { gte: since } } }),
+        prisma.conversation.count({ where: { kind: 'MEETING', createdAt: { gte: since } } }),
       ]);
     const counted = <T extends Record<string, unknown>>(rows: Array<T & { _count: { _all: number } }>) =>
       rows.map(({ _count, ...row }) => ({ ...row, count: _count._all }));
@@ -539,6 +539,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
       status: z.enum(['WAITING', 'ACTIVE', 'ENDED', 'EXPIRED']).optional(),
     }).parse(request.query);
     const where: Prisma.ConversationWhereInput = {
+      kind: 'MEETING',
       ...(query.status ? { status: query.status } : {}),
       ...(query.q ? {
         OR: [
@@ -559,6 +560,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
         take: query.pageSize,
         select: {
           id: true,
+          kind: true,
           title: true,
           status: true,
           hostLanguage: true,
@@ -597,6 +599,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
         where: { id },
         select: {
           id: true,
+          kind: true,
           title: true,
           status: true,
           hostLanguage: true,
@@ -649,7 +652,9 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
         select: { id: true, sequence: true, provider: true, errorCode: true, errorMessage: true, updatedAt: true },
       }),
     ]);
-    if (!conversation) throw notFound('CONVERSATION_NOT_FOUND', '会议不存在');
+    if (!conversation || conversation.kind === 'DIRECT') {
+      throw notFound('CONVERSATION_NOT_FOUND', '会议不存在');
+    }
     await prisma.adminAuditLog.create({
       data: { ...auditContext(request), action: 'CONVERSATION_DETAIL_VIEWED', targetType: 'CONVERSATION', targetId: id, metadata: {} },
     });
@@ -853,9 +858,11 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     const { reason } = z.object({ reason: reasonSchema }).parse(request.body ?? {});
     const current = await prisma.conversation.findUnique({
       where: { id },
-      select: { id: true, status: true, guestHistoryPolicy: true, endedAt: true },
+      select: { id: true, kind: true, status: true, guestHistoryPolicy: true, endedAt: true },
     });
-    if (!current) throw notFound('CONVERSATION_NOT_FOUND', '会议不存在');
+    if (!current || current.kind === 'DIRECT') {
+      throw notFound('CONVERSATION_NOT_FOUND', '会议不存在');
+    }
     if (current.status === 'EXPIRED') throw conflict('ROOM_EXPIRED', '会议已过期');
     if (current.status === 'ENDED') {
       return { ok: true, data: { conversationId: id, status: current.status, endedAt: current.endedAt } };

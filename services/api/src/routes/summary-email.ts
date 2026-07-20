@@ -82,6 +82,7 @@ export async function registerSummaryEmailRoutes(app: FastifyInstance): Promise<
           id,
           { history: true },
         );
+        assertSummaryDistributionAvailable(conversation);
         assertOwner(conversation.ownerId, request.auth.subjectId);
         const [summary, participants, sourceState] = await Promise.all([
           tx.conversationSummary.findUnique({ where: { conversationId: id } }),
@@ -131,6 +132,7 @@ export async function registerSummaryEmailRoutes(app: FastifyInstance): Promise<
           id,
           { history: true },
         );
+        assertSummaryDistributionAvailable(conversation);
         assertOwner(conversation.ownerId, request.auth.subjectId);
         if (conversation.status !== 'ENDED') {
           throw conflict('SUMMARY_EMAIL_REQUIRES_ENDED_CONVERSATION', '请先结束会议并生成最终会议纪要');
@@ -252,6 +254,7 @@ export async function registerSummaryEmailRoutes(app: FastifyInstance): Promise<
           id,
           { history: true },
         );
+        assertSummaryDistributionAvailable(conversation);
         assertOwner(conversation.ownerId, request.auth.subjectId);
         const found = await tx.summaryEmailDistribution.findFirst({
           where: { id: distributionId, conversationId: id },
@@ -698,6 +701,17 @@ function isUniqueConstraintError(error: unknown): boolean {
 
 function assertOwner(ownerId: string, subjectId: string): void {
   if (ownerId !== subjectId) throw forbidden('HOST_ONLY', '只有本会议主持人可以分发会议纪要');
+}
+
+function assertSummaryDistributionAvailable(
+  conversation: { kind: 'MEETING' | 'DIRECT' },
+): void {
+  if (conversation.kind === 'DIRECT') {
+    throw forbidden(
+      'DIRECT_CHAT_DOCUMENTS_UNAVAILABLE',
+      '好友私聊不支持 AI 整理或纪要分发',
+    );
+  }
 }
 
 type DistributionWithRecipients = SummaryEmailDistribution & {

@@ -44,6 +44,7 @@ final class RoomState {
     this.action = RoomAction.idle,
     this.inputLanguage = Language.zh,
     this.selfParticipantId,
+    this.directChatClosed = false,
     this.error,
   });
 
@@ -54,6 +55,7 @@ final class RoomState {
   final RoomAction action;
   final Language inputLanguage;
   final String? selfParticipantId;
+  final bool directChatClosed;
   final String? error;
 
   RoomState copyWith({
@@ -64,6 +66,7 @@ final class RoomState {
     RoomAction? action,
     Language? inputLanguage,
     String? selfParticipantId,
+    bool? directChatClosed,
     String? error,
     bool clearError = false,
   }) =>
@@ -75,6 +78,7 @@ final class RoomState {
         action: action ?? this.action,
         inputLanguage: inputLanguage ?? this.inputLanguage,
         selfParticipantId: selfParticipantId ?? this.selfParticipantId,
+        directChatClosed: directChatClosed ?? this.directChatClosed,
         error: clearError ? null : error ?? this.error,
       );
 }
@@ -167,7 +171,9 @@ final class RoomController extends StateNotifier<RoomState> {
 
   AudioCapture get _audioCapture => _capture ??= AudioCapture();
 
-  bool get _canSpeak => state.conversation?.canSpeakAs(_currentUserId) == true;
+  bool get _canSpeak =>
+      !state.directChatClosed &&
+      state.conversation?.canSpeakAs(_currentUserId) == true;
 
   bool get _canStartRecording =>
       !_disposed &&
@@ -442,6 +448,17 @@ final class RoomController extends StateNotifier<RoomState> {
         } else {
           _setParticipants(participants);
         }
+      case DirectChatFriendshipEnded():
+        unawaited(_discardPendingForLifecycle());
+        if (state.action == RoomAction.recording) {
+          unawaited(cancelRecording());
+        }
+        state = state.copyWith(
+          connection: RoomSocketStatus.disconnected,
+          action: RoomAction.idle,
+          directChatClosed: true,
+          error: '好友关系已解除，私聊已停止',
+        );
       case RoomEnded(:final endedAt):
         if (_mustPurgeAfterEnd(state.conversation, ConversationStatus.ended)) {
           _revokeRoomAccess('会议已结束，本次临时访问已失效');
@@ -468,6 +485,21 @@ final class RoomController extends StateNotifier<RoomState> {
         if (code == 'GUEST_TOKEN_REVOKED') {
           _revokeRoomAccess('您已被主持人移出本次会议');
           unawaited(_authenticationLost());
+          return;
+        }
+        if ((code == 'FRIEND_REQUIRED' || code == 'DIRECT_CHAT_INVALID') &&
+            state.conversation?.isDirect == true) {
+          unawaited(_discardPendingForLifecycle());
+          if (state.action == RoomAction.recording) {
+            unawaited(cancelRecording());
+          }
+          _realtime.disconnect();
+          state = state.copyWith(
+            connection: RoomSocketStatus.disconnected,
+            action: RoomAction.idle,
+            directChatClosed: true,
+            error: '好友关系已解除，私聊已停止',
+          );
           return;
         }
         if (code == 'CONVERSATION_NOT_FOUND' ||

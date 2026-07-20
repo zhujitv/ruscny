@@ -18,6 +18,7 @@ import { setRealtimeHub } from './realtime-hub.js';
 import {
   getConversationForAuth,
   getParticipant,
+  assertDirectConversationLiveAccess,
   messageDto,
   participantDto,
 } from './services/conversations.js';
@@ -234,6 +235,7 @@ export async function attachRealtime(app: FastifyInstance): Promise<Server> {
         const conversation = await getConversationForAuth(auth, conversationId, {
           history: true,
         });
+        await assertDirectConversationLiveAccess(auth, conversation);
         await assertRealtimeRoomOpen(conversation.id, conversation.status, conversation.expiresAt);
         const participant = await getParticipant(auth, conversationId);
         await recoverStaleProcessingMessages(conversationId);
@@ -359,7 +361,12 @@ export async function attachRealtime(app: FastifyInstance): Promise<Server> {
         if (socket.id === excludedSocketId) return;
         try {
           await assertSocketAuthorized(socket.data);
-          await getConversationForAuth(socket.data.auth, conversationId, { history: true });
+          const conversation = await getConversationForAuth(
+            socket.data.auth,
+            conversationId,
+            { history: true },
+          );
+          await assertDirectConversationLiveAccess(socket.data.auth, conversation);
           await getParticipant(socket.data.auth, conversationId);
           socket.emit(event, payload);
         } catch (error) {
@@ -475,6 +482,40 @@ export async function attachRealtime(app: FastifyInstance): Promise<Server> {
         return matched;
       }
     },
+    disconnectDirectChatParticipant: async (conversationId, participantId) => {
+      try {
+        const sockets = await io.in(roomName(conversationId)).fetchSockets();
+        let matched = false;
+        for (const socket of sockets) {
+          if (socket.data.participantIds?.[conversationId] === participantId) {
+            matched = true;
+            socket.emit('direct.chat.friendship-ended', {
+              conversationId,
+              participantId,
+            });
+            socket.disconnect(true);
+          }
+        }
+        return matched;
+      } catch (error) {
+        app.log.error(
+          { error, conversationId, participantId },
+          'Distributed direct-chat disconnect failed; applying local fallback',
+        );
+        let matched = false;
+        for (const socket of io.sockets.sockets.values()) {
+          if (socket.data.participantIds?.[conversationId] === participantId) {
+            matched = true;
+            socket.emit('direct.chat.friendship-ended', {
+              conversationId,
+              participantId,
+            });
+            socket.disconnect(true);
+          }
+        }
+        return matched;
+      }
+    },
     isSubjectOnline: async (subjectId) => {
       const sockets = await io.in(subjectRoomName(subjectId)).fetchSockets();
       return sockets.length > 0;
@@ -493,6 +534,7 @@ export async function attachRealtime(app: FastifyInstance): Promise<Server> {
       disconnectDevice: () => undefined,
       disconnectSubject: () => undefined,
       disconnectParticipant: async () => true,
+      disconnectDirectChatParticipant: async () => true,
       isSubjectOnline: async () => false,
       isReady: () => true,
     });
@@ -714,6 +756,7 @@ export async function validateSocketAndJoinedRooms(
     const conversation = await getConversationForAuth(data.auth, conversationId, {
       history: true,
     });
+    await assertDirectConversationLiveAccess(data.auth, conversation);
     await assertRealtimeRoomOpen(
       conversation.id,
       conversation.status,

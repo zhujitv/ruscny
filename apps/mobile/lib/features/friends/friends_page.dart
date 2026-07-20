@@ -21,16 +21,18 @@ final class _FriendsPageState extends ConsumerState<FriendsPage>
     with SingleTickerProviderStateMixin {
   final _search = TextEditingController();
   late final TabController _tabs;
+  late Future<List<Conversation>> _directChats;
   late Future<List<UserProfile>> _friends;
   late Future<List<FriendRequestModel>> _requests;
   List<UserProfile>? _searchResults;
   bool _searching = false;
   final _respondingRequestIds = <String>{};
+  String? _openingChatFriendId;
 
   @override
   void initState() {
     super.initState();
-    _tabs = TabController(length: 3, vsync: this);
+    _tabs = TabController(length: 4, vsync: this);
     _reload();
   }
 
@@ -42,6 +44,7 @@ final class _FriendsPageState extends ConsumerState<FriendsPage>
   }
 
   void _reload() {
+    _directChats = ref.read(friendRepositoryProvider).directChats();
     _friends = ref.read(friendRepositoryProvider).friends();
     _requests = ref.read(friendRepositoryProvider).requests();
     if (_tabs.indexIsChanging || !mounted) return;
@@ -62,6 +65,7 @@ final class _FriendsPageState extends ConsumerState<FriendsPage>
         bottom: TabBar(
           controller: _tabs,
           tabs: const [
+            Tab(child: AppText('私聊列表')),
             Tab(child: AppText('好友列表')),
             Tab(child: AppText('好友申请')),
             Tab(child: AppText('添加好友')),
@@ -71,6 +75,7 @@ final class _FriendsPageState extends ConsumerState<FriendsPage>
       body: TabBarView(
         controller: _tabs,
         children: [
+          _directChatsTab(),
           _friendsTab(),
           _requestsTab(),
           _searchTab(),
@@ -78,6 +83,64 @@ final class _FriendsPageState extends ConsumerState<FriendsPage>
       ),
     );
   }
+
+  Widget _directChatsTab() => FutureBuilder<List<Conversation>>(
+        future: _directChats,
+        builder: (context, snapshot) {
+          if (snapshot.connectionState != ConnectionState.done) {
+            return const LoadingView();
+          }
+          if (snapshot.hasError) {
+            return ErrorView(error: snapshot.error!, onRetry: _reload);
+          }
+          final chats = snapshot.data ?? const [];
+          if (chats.isEmpty) {
+            return const Center(child: AppText('还没有好友私聊'));
+          }
+          final unread = ref.watch(
+            socialRealtimeProvider.select((state) => state.unreadDirectChatIds),
+          );
+          return RefreshIndicator(
+            onRefresh: () async => _reload(),
+            child: ListView.separated(
+              padding: const EdgeInsets.all(16),
+              itemCount: chats.length,
+              separatorBuilder: (_, __) => const SizedBox(height: 8),
+              itemBuilder: (context, index) {
+                final chat = chats[index];
+                final peer = chat.directPeer;
+                final hasUnread = unread.contains(chat.id);
+                return Card(
+                  child: ListTile(
+                    leading: CircleAvatar(
+                      child: Text(
+                        (peer?.displayName.trim().isNotEmpty == true
+                                ? peer!.displayName.trim()
+                                : '好')
+                            .characters
+                            .first,
+                      ),
+                    ),
+                    title: AppText(
+                      peer?.displayName ?? chat.contactName ?? '好友私聊',
+                      translate: peer == null && chat.contactName == null,
+                    ),
+                    subtitle: AppText(
+                      chat.messageCount == 0
+                          ? '一对一翻译聊天 · 不创建会议房间'
+                          : '${chat.messageCount} 条翻译记录',
+                    ),
+                    trailing: hasUnread
+                        ? const Chip(label: AppText('新消息'))
+                        : const Icon(Icons.chevron_right),
+                    onTap: () => _openExistingDirectChat(chat.id),
+                  ),
+                );
+              },
+            ),
+          );
+        },
+      );
 
   Widget _friendsTab() => FutureBuilder<List<UserProfile>>(
         future: _friends,
@@ -109,14 +172,35 @@ final class _FriendsPageState extends ConsumerState<FriendsPage>
                       '${friend.online ? '在线'.tr(context) : '可邀请'.tr(context)}',
                       translate: false,
                     ),
-                    trailing: PopupMenuButton<String>(
-                      onSelected: (value) {
-                        if (value == 'delete') _removeFriend(friend);
-                      },
-                      itemBuilder: (_) => const [
-                        PopupMenuItem(
-                          value: 'delete',
-                          child: AppText('删除好友'),
+                    onTap: _openingChatFriendId == friend.id
+                        ? null
+                        : () => _openDirectChat(friend),
+                    trailing: Row(
+                      mainAxisSize: MainAxisSize.min,
+                      children: [
+                        IconButton.filledTonal(
+                          tooltip: '直接聊天'.tr(context),
+                          onPressed: _openingChatFriendId == friend.id
+                              ? null
+                              : () => _openDirectChat(friend),
+                          icon: _openingChatFriendId == friend.id
+                              ? const SizedBox.square(
+                                  dimension: 18,
+                                  child:
+                                      CircularProgressIndicator(strokeWidth: 2),
+                                )
+                              : const Icon(Icons.chat_bubble_outline),
+                        ),
+                        PopupMenuButton<String>(
+                          onSelected: (value) {
+                            if (value == 'delete') _removeFriend(friend);
+                          },
+                          itemBuilder: (_) => const [
+                            PopupMenuItem(
+                              value: 'delete',
+                              child: AppText('删除好友'),
+                            ),
+                          ],
                         ),
                       ],
                     ),
@@ -329,6 +413,42 @@ final class _FriendsPageState extends ConsumerState<FriendsPage>
     } catch (error) {
       _snack(readableError(error));
     }
+  }
+
+  Future<void> _openDirectChat(UserProfile friend) async {
+    if (_openingChatFriendId != null) return;
+    setState(() => _openingChatFriendId = friend.id);
+    try {
+      final conversation =
+          await ref.read(friendRepositoryProvider).openDirectChat(friend.id);
+      if (!mounted) return;
+      ref
+          .read(socialRealtimeProvider.notifier)
+          .markDirectChatRead(conversation.id);
+      await Navigator.push<void>(
+        context,
+        MaterialPageRoute<void>(
+          builder: (_) => RoomPage(conversationId: conversation.id),
+        ),
+      );
+    } catch (error) {
+      _snack(readableError(error));
+    } finally {
+      if (mounted) setState(() => _openingChatFriendId = null);
+    }
+  }
+
+  Future<void> _openExistingDirectChat(String conversationId) async {
+    ref
+        .read(socialRealtimeProvider.notifier)
+        .markDirectChatRead(conversationId);
+    await Navigator.push<void>(
+      context,
+      MaterialPageRoute<void>(
+        builder: (_) => RoomPage(conversationId: conversationId),
+      ),
+    );
+    if (mounted) _reload();
   }
 
   void _snack(String message) {

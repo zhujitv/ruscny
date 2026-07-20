@@ -74,6 +74,10 @@ final class ParticipantRemoved extends RoomEvent {
   final DateTime? removedAt;
 }
 
+final class DirectChatFriendshipEnded extends RoomEvent {
+  const DirectChatFriendshipEnded();
+}
+
 final class RoomEnded extends RoomEvent {
   const RoomEnded(this.endedAt);
 
@@ -278,6 +282,11 @@ final class RoomRealtimeClient {
           )?.toLocal(),
         ),
       );
+    });
+    socket.on('direct.chat.friendship-ended', (payload) {
+      final json = _json(payload);
+      if (json['conversationId']?.toString() != conversationId) return;
+      _events.add(const DirectChatFriendshipEnded());
     });
     socket.on('room.ended', (payload) {
       final json = _json(payload);

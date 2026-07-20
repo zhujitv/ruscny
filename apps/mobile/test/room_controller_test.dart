@@ -49,6 +49,35 @@ void main() {
     expect(controller.state.error, contains('点击重试连接'));
   });
 
+  test('friendship end stops live direct chat without purging history', () {
+    final controller = controllerForTest(currentUserId: 'user-1');
+    controller.debugSetConversation(
+      Conversation(
+        id: 'conversation-1',
+        kind: ConversationKind.direct,
+        ownerId: 'user-1',
+        contactId: 'contact-1',
+        status: ConversationStatus.active,
+        roomToken: '',
+        roomCode: '',
+        guestHistoryPolicy: GuestHistoryPolicy.permanent,
+        createdAt: DateTime.utc(2026, 7, 20),
+        updatedAt: DateTime.utc(2026, 7, 20),
+        supportsDocuments: false,
+      ),
+    );
+    expect(controller.debugCanStartRecording, isTrue);
+
+    controller.debugHandleEvent(const DirectChatFriendshipEnded());
+
+    expect(controller.state.connection, RoomSocketStatus.disconnected);
+    expect(controller.state.action, RoomAction.idle);
+    expect(controller.state.directChatClosed, isTrue);
+    expect(controller.debugCanStartRecording, isFalse);
+    expect(controller.state.error, contains('好友关系已解除'));
+    controller.dispose();
+  });
+
   test('waiting host can record while realtime synchronization is unavailable',
       () {
     final controller = controllerForTest(currentUserId: 'host-1');

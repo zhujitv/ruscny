@@ -76,9 +76,11 @@ final class _RoomPageState extends ConsumerState<RoomPage>
     final isConversationOwner = conversation != null &&
         session != null &&
         conversation.ownerId == session.userId;
-    final canSpeak = conversation?.canSpeakAs(session?.userId) == true;
+    final canSpeak = !state.directChatClosed &&
+        conversation?.canSpeakAs(session?.userId) == true;
     final canRecord = canSpeak && state.action == RoomAction.idle;
     final canReviewMessages = conversation?.status == ConversationStatus.active;
+    final isDirectChat = conversation?.isDirect == true;
     return PopScope(
       canPop: state.action != RoomAction.recording,
       onPopInvokedWithResult: (didPop, _) {
@@ -94,12 +96,18 @@ final class _RoomPageState extends ConsumerState<RoomPage>
             crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               AppText(
-                conversation?.contactName ?? '翻译房间',
-                translate: conversation?.contactName == null,
+                isDirectChat
+                    ? (conversation?.directPeer?.displayName ?? '好友私聊')
+                    : (conversation?.contactName ?? '翻译房间'),
+                translate: isDirectChat
+                    ? conversation?.directPeer == null
+                    : conversation?.contactName == null,
               ),
               AppText(
-                conversation?.title ?? '正在读取会议信息',
-                translate: conversation?.title == null,
+                isDirectChat
+                    ? '一对一翻译聊天 · 不创建会议房间'
+                    : (conversation?.title ?? '正在读取会议信息'),
+                translate: isDirectChat || conversation?.title == null,
                 style: Theme.of(context).textTheme.bodySmall,
               ),
             ],
@@ -111,14 +119,18 @@ final class _RoomPageState extends ConsumerState<RoomPage>
         ),
         body: Column(
           children: [
-            _RoomSummary(
-              state: state,
-              canManageGuests: isConversationOwner &&
-                  conversation.status == ConversationStatus.active,
-              removingParticipantId: _removingParticipantId,
-              onRemoveGuest: _confirmRemoveParticipant,
-            ),
+            if (isDirectChat)
+              _DirectChatBanner(peer: conversation?.directPeer)
+            else
+              _RoomSummary(
+                state: state,
+                canManageGuests: isConversationOwner &&
+                    conversation.status == ConversationStatus.active,
+                removingParticipantId: _removingParticipantId,
+                onRemoveGuest: _confirmRemoveParticipant,
+              ),
             if (isConversationOwner &&
+                !isDirectChat &&
                 conversation.status == ConversationStatus.waiting)
               Padding(
                 padding: const EdgeInsets.fromLTRB(14, 8, 14, 0),
@@ -168,7 +180,7 @@ final class _RoomPageState extends ConsumerState<RoomPage>
               ),
             Expanded(
               child: state.messages.isEmpty
-                  ? const _EmptyRoom()
+                  ? _EmptyRoom(direct: isDirectChat)
                   : ListView.builder(
                       controller: _scrollController,
                       padding: const EdgeInsets.fromLTRB(12, 12, 12, 20),
@@ -333,7 +345,7 @@ final class _RoomPageState extends ConsumerState<RoomPage>
                                 .cancelRecording(),
                           ),
                         ),
-                        if (isConversationOwner) ...[
+                        if (isConversationOwner && !isDirectChat) ...[
                           const SizedBox(width: 8),
                           IconButton.filledTonal(
                             tooltip: '结束会议'.tr(context),
@@ -839,6 +851,42 @@ final class _RoomSummary extends StatelessWidget {
       };
 }
 
+final class _DirectChatBanner extends StatelessWidget {
+  const _DirectChatBanner({required this.peer});
+
+  final DirectChatPeer? peer;
+
+  @override
+  Widget build(BuildContext context) => Container(
+        width: double.infinity,
+        padding: const EdgeInsets.fromLTRB(16, 10, 16, 11),
+        color: Theme.of(context).colorScheme.surfaceContainerLow,
+        child: Row(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            const Icon(Icons.lock_outline, size: 19),
+            const SizedBox(width: 9),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  AppText(
+                    peer == null ? '好友一对一私聊' : '与 ${peer!.displayName} 一对一私聊',
+                    style: const TextStyle(fontWeight: FontWeight.w600),
+                  ),
+                  const SizedBox(height: 2),
+                  const AppText(
+                    '支持中俄语音翻译和消息记录；不支持导出、AI 整理或纪要分发。',
+                    style: TextStyle(color: Colors.black54, fontSize: 12),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      );
+}
+
 final class _ConnectionChip extends StatelessWidget {
   const _ConnectionChip({required this.status});
   final RoomSocketStatus status;
@@ -1239,19 +1287,25 @@ final class RoomPushToTalkButton extends StatelessWidget {
 }
 
 final class _EmptyRoom extends StatelessWidget {
-  const _EmptyRoom();
+  const _EmptyRoom({this.direct = false});
+
+  final bool direct;
+
   @override
-  Widget build(BuildContext context) => const Center(
+  Widget build(BuildContext context) => Center(
         child: Padding(
-          padding: EdgeInsets.all(32),
+          padding: const EdgeInsets.all(32),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              Icon(Icons.record_voice_over_outlined, size: 52),
-              SizedBox(height: 12),
-              AppText('按住底部按钮说话，松开后识别并翻译'),
-              SizedBox(height: 6),
-              AppText('第一版不支持双方同时讲话', style: TextStyle(color: Colors.black54)),
+              const Icon(Icons.record_voice_over_outlined, size: 52),
+              const SizedBox(height: 12),
+              const AppText('按住底部按钮说话，松开后识别并翻译'),
+              const SizedBox(height: 6),
+              AppText(
+                direct ? '这是好友私聊，不会生成会议纪要' : '第一版不支持双方同时讲话',
+                style: const TextStyle(color: Colors.black54),
+              ),
             ],
           ),
         ),

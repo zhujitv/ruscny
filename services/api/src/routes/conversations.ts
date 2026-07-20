@@ -12,6 +12,7 @@ import { realtimeHub } from '../realtime-hub.js';
 import {
   conversationDto,
   conversationInclude,
+  assertDirectConversationLiveAccessInTransaction,
   assertLockedInvitationCredential,
   effectiveSourceText,
   effectiveTranslatedText,
@@ -160,6 +161,7 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
     async (request, reply) => {
       const { id } = z.object({ id: z.string() }).parse(request.params);
       const current = await getConversationForAuth(request.auth, id);
+      assertMeetingConversation(current);
       const now = new Date();
       if (current.status === 'ENDED') {
         throw conflict('ROOM_ENDED', '会议已结束，无法更新邀请');
@@ -305,7 +307,7 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
       await prisma.$transaction(async (tx) => {
           const joinedAt = new Date();
           const rows = await tx.$queryRaw<LockedInvitationConversation[]>`
-            SELECT "id", "ownerId", "status", "expiresAt", "startedAt", "roomTokenHash", "roomCodeHash"
+            SELECT "id", "kind", "ownerId", "status", "expiresAt", "startedAt", "roomTokenHash", "roomCodeHash"
             FROM "Conversation"
             WHERE "id" = ${conversation.id}
             FOR UPDATE
@@ -407,6 +409,7 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
       })
       .parse(request.query);
     const baseWhere = {
+      kind: 'MEETING' as const,
       ...(query.contactId ? { contactId: query.contactId } : {}),
       ...(query.search
         ? {
@@ -456,7 +459,7 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
     for (const row of rows) {
       try {
         const authorized = await getConversationForAuth(request.auth, row.id, { history: true });
-        visible.push(conversationDto(authorized));
+        visible.push(conversationDto(authorized, undefined, request.auth.subjectId));
       } catch (error) {
         if (!(error instanceof AppError && error.code === 'HISTORY_ACCESS_EXPIRED')) throw error;
       }
@@ -467,7 +470,12 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
   app.get('/v1/conversations/:id', { preHandler: authenticate }, async (request) => {
     const { id } = z.object({ id: z.string() }).parse(request.params);
     const conversation = await getConversationForAuth(request.auth, id, { history: true });
-    return { ok: true, data: { conversation: conversationDto(conversation) } };
+    return {
+      ok: true,
+      data: {
+        conversation: conversationDto(conversation, undefined, request.auth.subjectId),
+      },
+    };
   });
 
   app.patch(
@@ -477,6 +485,7 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
       const { id } = z.object({ id: z.string() }).parse(request.params);
       const body = z.object({ title: z.string().trim().min(1).max(200) }).parse(request.body);
       const current = await getConversationForAuth(request.auth, id);
+      assertMeetingConversation(current);
       assertConversationOwner(current.ownerId, request.auth.subjectId);
       const conversation = await prisma.conversation.update({
         where: { id },
@@ -493,6 +502,7 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
     async (request) => {
       const { id } = z.object({ id: z.string() }).parse(request.params);
       const current = await getConversationForAuth(request.auth, id);
+      assertMeetingConversation(current);
       assertConversationOwner(current.ownerId, request.auth.subjectId);
       if (current.status === 'EXPIRED') throw forbidden('ROOM_EXPIRED', '会议已过期');
       if (current.status === 'ENDED') {
@@ -569,6 +579,7 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
     async (request) => {
       const { id } = z.object({ id: z.string() }).parse(request.params);
       const current = await getConversationForAuth(request.auth, id);
+      assertMeetingConversation(current);
       assertConversationOwner(current.ownerId, request.auth.subjectId);
       const queuedAudioDeletions = await prisma.$transaction(async (tx) => {
         const rows = await tx.$queryRaw<Array<{ id: string }>>`
@@ -599,6 +610,7 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
         .object({ id: z.string(), participantId: z.string() })
         .parse(request.params);
       const current = await getConversationForAuth(request.auth, id);
+      assertMeetingConversation(current);
       assertConversationOwner(current.ownerId, request.auth.subjectId);
       const removedAt = new Date();
       let removal: { participant: Participant; invitationRotated: boolean } | undefined;
@@ -752,7 +764,7 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
       const body = participantProfileSchema.parse(request.body);
       const updated = await prisma.$transaction(async (tx) => {
         const rows = await tx.$queryRaw<LockedParticipantConversation[]>`
-          SELECT "id", "status", "expiresAt"
+          SELECT "id", "kind", "directPairKey", "status", "expiresAt"
           FROM "Conversation"
           WHERE "id" = ${id}
           FOR UPDATE
@@ -766,6 +778,11 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
         ) {
           throw conflict('ROOM_NOT_ACTIVE', '会议已结束或过期');
         }
+        await assertDirectConversationLiveAccessInTransaction(
+          tx,
+          request.auth,
+          conversation,
+        );
         const participant = await tx.participant.findFirst({
           where: participantWhereForAuth(request.auth, id, { active: true }),
         });
@@ -792,7 +809,8 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
     { preHandler: authenticate },
     async (request) => {
       const { id } = z.object({ id: z.string() }).parse(request.params);
-      await getConversationForAuth(request.auth, id);
+      const current = await getConversationForAuth(request.auth, id);
+      assertMeetingConversation(current);
       const leftAt = new Date();
       const result = await prisma.$transaction(async (tx) => {
         const rows = await tx.$queryRaw<LockedParticipantConversation[]>`
@@ -887,7 +905,8 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
           groupBy: z.enum(['sequence', 'speaker']).default('sequence'),
         })
         .parse(request.query);
-      await getConversationForAuth(request.auth, id, { history: true });
+      const readable = await getConversationForAuth(request.auth, id, { history: true });
+      assertMeetingDocumentsAvailable(readable);
       await recoverStaleProcessingMessages(id);
       const { conversation, messages } = await prisma.$transaction(async (tx) => {
         const authorized = await getConversationForAuthInTransaction(
@@ -896,6 +915,7 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
           id,
           { history: true },
         );
+        assertMeetingDocumentsAvailable(authorized);
         const scopedMessages = await tx.translationMessage.findMany({
           where: { conversationId: id, status: { in: ['FINAL', 'FAILED'] } },
           orderBy: { sequence: 'asc' },
@@ -957,9 +977,10 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
     async (request) => {
       const { id } = z.object({ id: z.string() }).parse(request.params);
       const result = await prisma.$transaction(async (tx) => {
-        await getConversationForAuthInTransaction(tx, request.auth, id, {
+        const conversation = await getConversationForAuthInTransaction(tx, request.auth, id, {
           history: true,
         });
+        assertMeetingDocumentsAvailable(conversation);
         const [summary, sourceState] = await Promise.all([
           tx.conversationSummary.findUnique({ where: { conversationId: id } }),
           tx.translationMessage.aggregate({
@@ -988,6 +1009,8 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
     },
     async (request) => {
       const { id } = z.object({ id: z.string() }).parse(request.params);
+      const readable = await getConversationForAuth(request.auth, id, { history: true });
+      assertMeetingDocumentsAvailable(readable);
       const body = summaryGenerationSchema.parse(request.body ?? {});
       if (Object.keys(body).length > 0) {
         const saved = await prisma.$transaction(async (tx) => {
@@ -997,6 +1020,7 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
             id,
             { history: true },
           );
+          assertMeetingDocumentsAvailable(conversation);
           assertConversationOwner(conversation.ownerId, request.auth.subjectId);
           if (conversation.status !== 'ENDED') {
             throw conflict(
@@ -1028,6 +1052,7 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
           id,
           { history: true },
         );
+        assertMeetingDocumentsAvailable(conversation);
         assertConversationOwner(conversation.ownerId, request.auth.subjectId);
         if (conversation.status !== 'ENDED') {
           throw conflict(
@@ -1176,6 +1201,7 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
             id,
             { history: true },
           );
+          assertMeetingDocumentsAvailable(conversation);
           assertConversationOwner(conversation.ownerId, request.auth.subjectId);
           if (conversation.status !== 'ENDED') {
             throw conflict('SUMMARY_REQUIRES_ENDED_CONVERSATION', '会议状态已变化，未保存 AI 纪要');
@@ -1231,6 +1257,7 @@ export async function registerConversationRoutes(app: FastifyInstance): Promise<
       const body = z.object({ revision: z.number().int().positive() }).strict().parse(request.body);
       const summary = await prisma.$transaction(async (tx) => {
         const conversation = await getConversationForAuthInTransaction(tx, request.auth, id, { history: true });
+        assertMeetingDocumentsAvailable(conversation);
         assertConversationOwner(conversation.ownerId, request.auth.subjectId);
         const current = await tx.conversationSummary.findUnique({ where: { conversationId: id } });
         if (!current) throw notFound('SUMMARY_NOT_FOUND', '会议纪要尚未生成');
@@ -1502,6 +1529,7 @@ function participantSourceVersion(participant: {
 
 interface LockedInvitationConversation {
   id: string;
+  kind: 'MEETING' | 'DIRECT';
   ownerId: string;
   status: string;
   expiresAt: Date;
@@ -1527,6 +1555,8 @@ interface LockedRemovalConversation {
 
 interface LockedParticipantConversation {
   id: string;
+  kind: 'MEETING' | 'DIRECT';
+  directPairKey: string | null;
   status: string;
   expiresAt: Date;
 }
@@ -1551,6 +1581,28 @@ function participantWhereForAuth(
 function assertConversationOwner(ownerId: string, subjectId: string): void {
   if (ownerId !== subjectId) {
     throw forbidden('HOST_PERMISSION_REQUIRED', '只有本会议主持人可以执行此操作');
+  }
+}
+
+function assertMeetingConversation(
+  conversation: { kind: 'MEETING' | 'DIRECT' },
+): void {
+  if (conversation.kind === 'DIRECT') {
+    throw forbidden(
+      'DIRECT_CHAT_MEETING_ACTION_UNAVAILABLE',
+      '好友私聊不支持房间邀请、参会者管理或结束会议操作',
+    );
+  }
+}
+
+function assertMeetingDocumentsAvailable(
+  conversation: { kind: 'MEETING' | 'DIRECT' },
+): void {
+  if (conversation.kind === 'DIRECT') {
+    throw forbidden(
+      'DIRECT_CHAT_DOCUMENTS_UNAVAILABLE',
+      '好友私聊仅保留消息记录，不支持导出、AI 整理或纪要分发',
+    );
   }
 }
 

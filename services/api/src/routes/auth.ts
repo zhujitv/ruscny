@@ -1330,7 +1330,13 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
             { participants: { some: { userId: request.auth.subjectId } } },
           ],
         },
-        select: { id: true, ownerId: true, status: true, guestHistoryPolicy: true },
+        select: {
+          id: true,
+          kind: true,
+          ownerId: true,
+          status: true,
+          guestHistoryPolicy: true,
+        },
       });
       await lockConversationsForDeletion(
         tx,
@@ -1453,7 +1459,12 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
 
       await tx.contact.updateMany({
         where: { linkedUserId: request.auth.subjectId },
-        data: { linkedUserId: null },
+        data: {
+          linkedUserId: null,
+          displayName: anonymizedName,
+          company: null,
+          email: null,
+        },
       });
       await tx.friendRequest.deleteMany({
         where: {

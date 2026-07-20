@@ -124,6 +124,42 @@ void main() {
     expect(conversation.participants.last.preferredLanguage, Language.ru);
   });
 
+  test('direct chat disables meeting documents and keeps the friend identity',
+      () {
+    final conversation = Conversation.fromJson({
+      'id': 'direct-a-b',
+      'kind': 'DIRECT',
+      'ownerId': 'user-a',
+      'contactId': 'contact-b',
+      'status': 'ACTIVE',
+      'roomToken': '',
+      'roomCode': '',
+      'createdAt': '2026-07-20T10:00:00Z',
+      'updatedAt': '2026-07-20T10:00:00Z',
+      'capabilities': {
+        'documentExport': false,
+        'aiSummary': false,
+        'summaryDistribution': false,
+      },
+      'directPeer': {
+        'id': 'user-b',
+        'displayName': 'Иван',
+        'company': 'RU Trade',
+        'preferredLanguage': 'ru',
+        'presence': 'ONLINE',
+      },
+    });
+
+    expect(conversation.kind, ConversationKind.direct);
+    expect(conversation.isDirect, isTrue);
+    expect(conversation.directPeer?.displayName, 'Иван');
+    expect(conversation.directPeer?.preferredLanguage, Language.ru);
+    expect(conversation.supportsDocuments, isFalse);
+    expect(conversation.canEnd, isFalse);
+    expect(conversation.canSpeakAs('user-b'), isTrue);
+    expect(Conversation.fromJson(conversation.toJson()).isDirect, isTrue);
+  });
+
   test('meeting summary keeps participant and speaker attribution', () {
     final summary = MeetingSummary.fromJson({
       'summary': '报价讨论',

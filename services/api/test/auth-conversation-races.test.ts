@@ -178,6 +178,7 @@ function errorEnvelope(instance: FastifyInstance): void {
 
 const invitation = {
   id: 'conversation-a',
+  kind: 'MEETING',
   status: 'WAITING',
   roomTokenHash: stableHash('valid-room-token-123456'),
   roomCodeHash: stableHash('12345678'),
@@ -186,6 +187,62 @@ const invitation = {
 };
 
 describe('join versus end/expiry races', () => {
+  it('never resolves a direct chat through the registered meeting join route', async () => {
+    mocks.prisma.conversation.findUnique.mockResolvedValue({
+      ...invitation,
+      kind: 'DIRECT',
+      status: 'ACTIVE',
+      directPairKey: 'customer-a:customer-b',
+    });
+
+    app = Fastify({ logger: false });
+    errorEnvelope(app);
+    await registerConversationRoutes(app);
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/conversations/join',
+      payload: {
+        roomCode: '12345678',
+        displayName: 'Intruder',
+        company: 'Unknown',
+        preferredLanguage: 'ru',
+      },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ ok: false, code: 'ROOM_NOT_FOUND' });
+    expect(mocks.prisma.$transaction).not.toHaveBeenCalled();
+  });
+
+  it('never resolves a direct chat through temporary guest authentication', async () => {
+    mocks.prisma.conversation.findUnique.mockResolvedValue({
+      ...invitation,
+      kind: 'DIRECT',
+      status: 'ACTIVE',
+      directPairKey: 'customer-a:customer-b',
+    });
+
+    app = Fastify({ logger: false });
+    errorEnvelope(app);
+    await registerAuthRoutes(app);
+    const response = await app.inject({
+      method: 'POST',
+      url: '/v1/auth/guest',
+      payload: {
+        displayName: 'Intruder',
+        company: 'Unknown',
+        email: 'intruder@example.test',
+        preferredLanguage: 'ru',
+        deviceId: 'intruder-device-a',
+        roomCode: '12345678',
+      },
+    });
+
+    expect(response.statusCode).toBe(404);
+    expect(response.json()).toEqual({ ok: false, code: 'ROOM_NOT_FOUND' });
+    expect(mocks.prisma.$transaction).not.toHaveBeenCalled();
+  });
+
   it('revokes the current registered device from Bearer logout without a refresh token', async () => {
     mocks.prisma.userDevice.updateMany.mockResolvedValue({ count: 1 });
 

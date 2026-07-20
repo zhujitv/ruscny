@@ -46,6 +46,11 @@ enum ConversationStatus {
   EXPIRED
 }
 
+enum ConversationKind {
+  MEETING
+  DIRECT
+}
+
 enum GuestHistoryPolicy {
   NO_ACCESS_AFTER_END
   ACCESS_FOR_24_HOURS
@@ -256,6 +261,8 @@ model Contact {
 
 model Conversation {
   id                        String                     @id @default(cuid())
+  kind                      ConversationKind           @default(MEETING)
+  directPairKey             String?                    @unique
   ownerId                   String
   contactId                 String
   title                     String?
@@ -283,6 +290,7 @@ model Conversation {
   meetingInvitations        MeetingInvitation[]
 
   @@index([ownerId, contactId, createdAt])
+  @@index([kind, updatedAt])
   @@index([status, expiresAt])
 }
 

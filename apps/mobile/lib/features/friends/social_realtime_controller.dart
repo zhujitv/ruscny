@@ -28,18 +28,24 @@ final class SocialRealtimeState {
     this.revision = 0,
     this.latestInvitation,
     this.lastEvent,
+    this.latestDirectConversationId,
+    this.unreadDirectChatIds = const {},
   });
 
   final bool connected;
   final int revision;
   final MeetingInvitationModel? latestInvitation;
   final String? lastEvent;
+  final String? latestDirectConversationId;
+  final Set<String> unreadDirectChatIds;
 
   SocialRealtimeState copyWith({
     bool? connected,
     int? revision,
     MeetingInvitationModel? latestInvitation,
     String? lastEvent,
+    String? latestDirectConversationId,
+    Set<String>? unreadDirectChatIds,
     bool clearInvitation = false,
   }) =>
       SocialRealtimeState(
@@ -48,6 +54,10 @@ final class SocialRealtimeState {
         latestInvitation:
             clearInvitation ? null : latestInvitation ?? this.latestInvitation,
         lastEvent: lastEvent ?? this.lastEvent,
+        latestDirectConversationId:
+            latestDirectConversationId ?? this.latestDirectConversationId,
+        unreadDirectChatIds:
+            unreadDirectChatIds ?? this.unreadDirectChatIds,
       );
 }
 
@@ -134,12 +144,43 @@ final class SocialRealtimeController
       }
       _markEvent('meeting.invitation.created', invitation: parsed);
     });
+    socket.on('direct.chat.ready', (payload) {
+      final conversationId = _json(payload)['conversationId']?.toString();
+      _markDirectEvent('direct.chat.ready', conversationId, unread: false);
+    });
+    socket.on('direct.message.created', (payload) {
+      final conversationId = _json(payload)['conversationId']?.toString();
+      _markDirectEvent('direct.message.created', conversationId, unread: true);
+    });
     socket.connect();
   }
 
   void consumeInvitation(String invitationId) {
     if (state.latestInvitation?.id != invitationId) return;
     state = state.copyWith(clearInvitation: true);
+  }
+
+  void markDirectChatRead(String conversationId) {
+    if (!state.unreadDirectChatIds.contains(conversationId)) return;
+    final unread = {...state.unreadDirectChatIds}..remove(conversationId);
+    state = state.copyWith(unreadDirectChatIds: unread);
+  }
+
+  void _markDirectEvent(
+    String event,
+    String? conversationId, {
+    required bool unread,
+  }) {
+    if (_disposed || conversationId == null || conversationId.isEmpty) return;
+    final unreadIds = unread
+        ? ({...state.unreadDirectChatIds}..add(conversationId))
+        : state.unreadDirectChatIds;
+    state = state.copyWith(
+      revision: state.revision + 1,
+      lastEvent: event,
+      latestDirectConversationId: conversationId,
+      unreadDirectChatIds: unreadIds,
+    );
   }
 
   void _markEvent(String event, {MeetingInvitationModel? invitation}) {

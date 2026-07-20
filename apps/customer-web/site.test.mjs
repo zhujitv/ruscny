@@ -67,6 +67,19 @@ test('homepage promotes the launched AI summary workflow without the obsolete pr
   assert.match(source, /不通过群发抄送公开他人地址/);
 });
 
+test('homepage distinguishes friend direct chats from document-enabled meetings', async () => {
+  const [home, source] = await Promise.all([
+    readFile(new URL('index.html', directory), 'utf8'),
+    readFile(new URL('app.js', directory), 'utf8'),
+  ]);
+
+  assert.match(home, /data-i18n="featureInviteTitle">好友私聊与会议邀请/);
+  assert.match(source, /无需创建会议房间/);
+  assert.match(source, /私聊只保留消息，不生成 AI 纪要/);
+  assert.match(source, /Личный чат и приглашения/);
+  assert.match(source, /ИИ-протокол не создаётся/);
+});
+
 test('homepage lazily loads the matching Chinese or Russian promotional film', async () => {
   const [home, source] = await Promise.all([
     readFile(new URL('index.html', directory), 'utf8'),

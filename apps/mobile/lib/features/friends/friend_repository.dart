@@ -47,6 +47,25 @@ final class FriendRepository {
     await _api.delete('/friends/${Uri.encodeComponent(friendId)}');
   }
 
+  Future<Conversation> openDirectChat(String friendId) async {
+    final payload = await _api.postMap(
+      '/direct-chats/${Uri.encodeComponent(friendId)}',
+    );
+    final conversation = payload['conversation'];
+    if (conversation is! Map) {
+      throw const FormatException('私聊响应缺少会话数据');
+    }
+    return Conversation.fromJson(conversation.cast<String, dynamic>());
+  }
+
+  Future<List<Conversation>> directChats() async {
+    final rows = await _api.getList('/direct-chats');
+    return rows
+        .whereType<Map>()
+        .map((row) => Conversation.fromJson(row.cast<String, dynamic>()))
+        .toList(growable: false);
+  }
+
   Future<void> inviteToMeeting({
     required String conversationId,
     required String friendId,

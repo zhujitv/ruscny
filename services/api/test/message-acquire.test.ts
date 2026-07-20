@@ -98,6 +98,36 @@ function configureWaitingHostAuthorizationRows() {
   });
 }
 
+function configureDirectChatAuthorizationRows({ friends }: { friends: boolean }) {
+  mocks.transaction.$queryRaw.mockImplementation(async (strings: TemplateStringsArray) => {
+    const sql = Array.from(strings).join('?');
+    if (sql.includes('FROM "Conversation"')) {
+      return [{
+        status: 'ACTIVE',
+        expiresAt: new Date('9999-12-31T23:59:59.999Z'),
+        kind: 'DIRECT',
+        directPairKey: 'host-a:user-b',
+      }];
+    }
+    if (sql.includes('FROM "User"')) return [{ id: 'host-a', status: 'ACTIVE' }];
+    if (sql.includes('FROM "UserDevice"')) {
+      return [{ sessionId: 'host-session-a', revokedAt: null }];
+    }
+    if (sql.includes('FROM "Participant"')) {
+      return [activeParticipant({
+        role: 'HOST',
+        displayName: 'Host locked',
+        userId: 'host-a',
+        guestIdentityId: null,
+      })];
+    }
+    if (sql.includes('FROM "Friendship"')) {
+      return friends ? [{ id: 'friendship-a-b' }] : [];
+    }
+    return [];
+  });
+}
+
 beforeEach(() => {
   vi.clearAllMocks();
   mocks.prisma.translationMessage.findUnique.mockResolvedValue(null);
@@ -116,6 +146,28 @@ beforeEach(() => {
 });
 
 describe('new message acquisition', () => {
+  it('does not send a new direct-chat message after the friendship is removed', async () => {
+    configureDirectChatAuthorizationRows({ friends: false });
+
+    await expect(acquireProcessingAttempt({
+      request: { auth: hostAuth } as never,
+      conversationId: 'conversation-a',
+      idempotencyKey: 'direct-message-after-unfriend',
+      sourceLanguage: 'zh',
+      targetLanguage: 'ru',
+      sourceText: '这条消息不能发送',
+    }, {
+      id: 'participant-host',
+      role: 'HOST',
+      displayName: 'Host',
+      company: null,
+      preferredLanguage: 'zh',
+    })).rejects.toMatchObject({ code: 'FRIEND_REQUIRED', statusCode: 403 });
+
+    expect(mocks.transaction.conversation.updateMany).not.toHaveBeenCalled();
+    expect(mocks.transaction.translationMessage.create).not.toHaveBeenCalled();
+  });
+
   it('allocates a sequence for the locked host while the room is WAITING', async () => {
     configureWaitingHostAuthorizationRows();
 

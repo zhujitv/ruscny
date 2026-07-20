@@ -182,6 +182,19 @@ async function processMessage(input: ProcessInput) {
     }
     const finalMessage = finalResult.message;
     realtimeHub().emitToConversation(input.conversationId, 'translation.final', messageDto(finalMessage));
+    if (conversation.kind === 'DIRECT') {
+      const directPeerId = directPeerSubjectId(
+        conversation.directPairKey,
+        input.request.auth.subjectId,
+      );
+      if (directPeerId) {
+        realtimeHub().emitToSubject(directPeerId, 'direct.message.created', {
+          conversationId: input.conversationId,
+          messageId: finalMessage.id,
+          sequence: finalMessage.sequence,
+        });
+      }
+    }
     wakeTtsGenerationWorker();
     return finalMessage;
   } catch (error) {
@@ -207,6 +220,17 @@ async function processMessage(input: ProcessInput) {
     }
     throw failedResult.error;
   }
+}
+
+function directPeerSubjectId(
+  directPairKey: string | null,
+  subjectId: string,
+): string | undefined {
+  const [userAId, userBId, extra] = directPairKey?.split(':') ?? [];
+  if (!userAId || !userBId || extra) return undefined;
+  if (subjectId === userAId) return userBId;
+  if (subjectId === userBId) return userAId;
+  return undefined;
 }
 
 interface ProcessingAttempt {
@@ -546,6 +570,8 @@ export async function failMessageAttempt(
 interface LockedConversation {
   status: string;
   expiresAt: Date;
+  kind: 'MEETING' | 'DIRECT';
+  directPairKey: string | null;
 }
 
 function isSpeechOpen(status: string, role: ParticipantRole): boolean {
@@ -573,7 +599,7 @@ export async function lockConversationForSpeech(
   conversationId: string,
 ): Promise<LockedConversation | undefined> {
   const rows = await tx.$queryRaw<LockedConversation[]>`
-    SELECT "status", "expiresAt"
+    SELECT "status", "expiresAt", "kind", "directPairKey"
     FROM "Conversation"
     WHERE "id" = ${conversationId}
     FOR UPDATE
@@ -666,6 +692,9 @@ export async function assertMessageAuthorizationLocked(
   }
 
   if (auth.role === 'GUEST') {
+    if (conversation.kind === 'DIRECT') {
+      throw forbidden('FORMAL_ACCOUNT_REQUIRED', '好友私聊只支持正式账号');
+    }
     const guestIdentityId = auth.guestIdentityId ?? auth.subjectId;
     const identities = await tx.$queryRaw<LockedGuestAuthorization[]>`
       SELECT "id", "sessionId", "deviceId", "conversationId", "expiresAt", "revokedAt"
@@ -728,6 +757,13 @@ export async function assertMessageAuthorizationLocked(
   if (participant.userId !== auth.subjectId || participant.guestIdentityId) {
     throw forbidden('NOT_A_PARTICIPANT', '您不是该会议参与者');
   }
+  if (conversation.kind === 'DIRECT') {
+    await assertDirectFriendshipLocked(
+      tx,
+      conversation.directPairKey,
+      auth.subjectId,
+    );
+  }
   assertParticipantCanSpeak(
     conversation.status,
     participant.role,
@@ -735,6 +771,26 @@ export async function assertMessageAuthorizationLocked(
     now,
   );
   return participant;
+}
+
+async function assertDirectFriendshipLocked(
+  tx: Prisma.TransactionClient,
+  directPairKey: string | null,
+  subjectId: string,
+): Promise<void> {
+  const [userAId, userBId, extra] = directPairKey?.split(':') ?? [];
+  if (!userAId || !userBId || extra || (subjectId !== userAId && subjectId !== userBId)) {
+    throw forbidden('DIRECT_CHAT_INVALID', '好友私聊关系无效');
+  }
+  const rows = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT "id"
+    FROM "Friendship"
+    WHERE "userAId" = ${userAId} AND "userBId" = ${userBId}
+    FOR SHARE
+  `;
+  if (!rows[0]) {
+    throw forbidden('FRIEND_REQUIRED', '好友关系解除后不能继续发送私聊消息');
+  }
 }
 
 async function lockParticipant(
@@ -770,6 +826,8 @@ const NON_BROADCAST_FAILURE_CODES = new Set([
   'NOT_A_PARTICIPANT',
   'PARTICIPANT_REMOVED',
   'PARTICIPANT_INACTIVE',
+  'FRIEND_REQUIRED',
+  'DIRECT_CHAT_INVALID',
   'ROOM_NOT_ACTIVE',
 ]);
 
