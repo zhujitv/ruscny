@@ -32,6 +32,7 @@ import {
   type RealtimeTranslationEvent,
   type RealtimeTranslationLanguage,
 } from './services/aliyun-realtime-translation.js';
+import { friendCallHeartbeatExpiredWhere } from './services/friend-call-liveness.js';
 
 interface SocketData {
   auth: AuthContext;
@@ -262,6 +263,7 @@ export async function attachRealtime(app: FastifyInstance): Promise<Server> {
             where: {
               id: callId,
               status: 'ACTIVE',
+              AND: { NOT: friendCallHeartbeatExpiredWhere(new Date()) },
               OR: [
                 { callerId: auth.subjectId, callerDeviceId: auth.deviceId },
                 { calleeId: auth.subjectId, calleeDeviceId: auth.deviceId },
@@ -355,6 +357,7 @@ export async function attachRealtime(app: FastifyInstance): Promise<Server> {
             where: {
               id: callId,
               status: 'ACTIVE',
+              AND: { NOT: friendCallHeartbeatExpiredWhere(new Date()) },
               OR: [
                 {
                   callerId: active.sourceSubjectId,

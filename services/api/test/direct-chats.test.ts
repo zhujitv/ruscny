@@ -9,7 +9,7 @@ const mocks = vi.hoisted(() => {
     contact: { findFirst: vi.fn(), create: vi.fn() },
     friendship: { deleteMany: vi.fn() },
     friendRequest: { deleteMany: vi.fn() },
-    friendCall: { findMany: vi.fn(), updateMany: vi.fn() },
+    friendCall: { updateManyAndReturn: vi.fn() },
   };
   return {
     transaction,
@@ -79,7 +79,7 @@ beforeEach(async () => {
     { id: 'user-a', status: 'ACTIVE' },
     { id: 'user-b', status: 'ACTIVE' },
   ]);
-  mocks.transaction.friendCall.findMany.mockResolvedValue([]);
+  mocks.transaction.friendCall.updateManyAndReturn.mockResolvedValue([]);
   app = Fastify({ logger: false });
   app.setErrorHandler(async (error, _request, reply) => {
     if (error instanceof AppError) {
@@ -104,8 +104,12 @@ describe('friend direct chats', () => {
     });
     mocks.transaction.friendship.deleteMany.mockResolvedValue({ count: 1 });
     mocks.transaction.friendRequest.deleteMany.mockResolvedValue({ count: 2 });
-    mocks.transaction.friendCall.findMany.mockResolvedValue([{ id: 'call-a-b' }]);
-    mocks.transaction.friendCall.updateMany.mockResolvedValue({ count: 1 });
+    mocks.transaction.friendCall.updateManyAndReturn.mockResolvedValue([{
+      id: 'call-a-b',
+      callerId: 'user-a',
+      calleeId: 'user-b',
+      mediaType: 'VIDEO',
+    }]);
 
     const response = await app!.inject({
       method: 'DELETE',
@@ -122,11 +126,21 @@ describe('friend direct chats', () => {
       'direct-a-b',
       'participant-b',
     );
-    expect(mocks.transaction.friendCall.updateMany).toHaveBeenCalled();
+    expect(mocks.transaction.friendCall.updateManyAndReturn).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: expect.objectContaining({ status: { in: ['RINGING', 'ACTIVE'] } }),
+        select: { id: true, callerId: true, calleeId: true, mediaType: true },
+      }),
+    );
     expect(mocks.emitToSubject).toHaveBeenCalledWith(
       'user-b',
       'friend.call.ended',
-      { callId: 'call-a-b', status: 'ENDED' },
+      { callId: 'call-a-b', status: 'ENDED', mediaType: 'VIDEO' },
+    );
+    expect(mocks.emitToSubject).toHaveBeenCalledWith(
+      'user-a',
+      'friend.call.ended',
+      { callId: 'call-a-b', status: 'ENDED', mediaType: 'VIDEO' },
     );
   });
 

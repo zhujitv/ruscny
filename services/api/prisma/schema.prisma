@@ -149,6 +149,11 @@ enum FriendCallStatus {
   MISSED
 }
 
+enum FriendCallMediaType {
+  AUDIO
+  VIDEO
+}
+
 model User {
   id                                 String                     @id @default(cuid())
   role                               UserRole
@@ -627,26 +632,32 @@ model Friendship {
 }
 
 model FriendCall {
-  id             String           @id @default(cuid())
-  callerId       String
-  calleeId       String
-  callerDeviceId String
-  calleeDeviceId String?
-  channelId      String           @unique
-  status         FriendCallStatus @default(RINGING)
-  acceptedAt     DateTime?
-  lastHeartbeatAt DateTime?
-  endedAt        DateTime?
-  endedById      String?
-  createdAt      DateTime         @default(now())
-  updatedAt      DateTime         @updatedAt
-  caller         User             @relation("FriendCallCaller", fields: [callerId], references: [id], onDelete: Cascade)
-  callee         User             @relation("FriendCallCallee", fields: [calleeId], references: [id], onDelete: Cascade)
-  endedBy        User?            @relation("FriendCallEndedBy", fields: [endedById], references: [id], onDelete: SetNull)
+  id                String              @id @default(cuid())
+  callerId          String
+  calleeId          String
+  callerDeviceId    String
+  calleeDeviceId    String?
+  channelId         String              @unique
+  status            FriendCallStatus    @default(RINGING)
+  mediaType         FriendCallMediaType @default(AUDIO)
+  livenessVersion   Int                 @default(1)
+  acceptedAt        DateTime?
+  lastHeartbeatAt   DateTime?
+  callerHeartbeatAt DateTime?
+  calleeHeartbeatAt DateTime?
+  endedAt           DateTime?
+  endedById         String?
+  createdAt         DateTime            @default(now())
+  updatedAt         DateTime            @updatedAt
+  caller            User                @relation("FriendCallCaller", fields: [callerId], references: [id], onDelete: Cascade)
+  callee            User                @relation("FriendCallCallee", fields: [calleeId], references: [id], onDelete: Cascade)
+  endedBy           User?               @relation("FriendCallEndedBy", fields: [endedById], references: [id], onDelete: SetNull)
 
   @@index([callerId, status, updatedAt])
   @@index([calleeId, status, updatedAt])
   @@index([status, lastHeartbeatAt])
+  @@index([status, callerHeartbeatAt])
+  @@index([status, calleeHeartbeatAt])
 }
 
 model MeetingInvitation {

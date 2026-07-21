@@ -254,7 +254,7 @@ export async function registerSocialRoutes(app: FastifyInstance): Promise<void> 
           ],
         },
       });
-      const activeCalls = await tx.friendCall.findMany({
+      const endedCalls = await tx.friendCall.updateManyAndReturn({
         where: {
           status: { in: ['RINGING', 'ACTIVE'] },
           OR: [
@@ -262,22 +262,25 @@ export async function registerSocialRoutes(app: FastifyInstance): Promise<void> 
             { callerId: userBId, calleeId: userAId },
           ],
         },
-        select: { id: true },
+        data: { status: 'ENDED', endedAt: new Date(), endedById: request.auth.subjectId },
+        select: { id: true, callerId: true, calleeId: true, mediaType: true },
       });
-      if (activeCalls.length) {
-        await tx.friendCall.updateMany({
-          where: { id: { in: activeCalls.map((call) => call.id) }, status: { in: ['RINGING', 'ACTIVE'] } },
-          data: { status: 'ENDED', endedAt: new Date(), endedById: request.auth.subjectId },
-        });
-      }
-      return { conversation, endedCallIds: activeCalls.map((call) => call.id) };
+      return { conversation, endedCalls };
     });
     realtimeHub().emitToSubject(friendId, 'friend.removed', {
       userId: request.auth.subjectId,
     });
-    for (const callId of removal.endedCallIds) {
-      realtimeHub().stopFriendCallTranslation(callId);
-      realtimeHub().emitToSubject(friendId, 'friend.call.ended', { callId, status: 'ENDED' });
+    for (const call of removal.endedCalls) {
+      realtimeHub().stopFriendCallTranslation(call.id);
+      const payload = {
+        callId: call.id,
+        status: 'ENDED',
+        mediaType: call.mediaType,
+      };
+      realtimeHub().emitToSubject(call.callerId, 'friend.call.ended', payload);
+      if (call.calleeId !== call.callerId) {
+        realtimeHub().emitToSubject(call.calleeId, 'friend.call.ended', payload);
+      }
     }
     if (removal.conversation) {
       await Promise.all(
