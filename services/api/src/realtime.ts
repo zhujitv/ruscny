@@ -28,6 +28,7 @@ import {
   AliyunRealtimeTranslationNotConfiguredError,
   AliyunRealtimeTranslationProtocolError,
   createAliyunRealtimeTranslationSession,
+  isAliyunRealtimeAudioFallbackError,
   type AliyunRealtimeTranslationSession,
   type RealtimeTranslationEvent,
   type RealtimeTranslationLanguage,
@@ -299,19 +300,71 @@ export async function attachRealtime(app: FastifyInstance): Promise<Server> {
             ? call.callee.autoPlayTranslationAudio
             : call.caller.autoPlayTranslationAudio;
           let active: ActiveCallTranslation | undefined;
-          const session = await createAliyunRealtimeTranslationSession({
-            sourceLanguage,
-            targetLanguage,
-            outputAudio,
-            onEvent: (event) => {
-              if (!active || callTranslationSessions.get(key) !== active) return;
-              emitCallTranslationEvent(io, active, event, app);
-              if (event.type === 'finished' || event.type === 'error') {
-                if (event.type === 'error') closeTranslationsForCall(callId);
-                else callTranslationSessions.delete(key);
-              }
-            },
-          });
+          const onTranslationEvent = (event: RealtimeTranslationEvent) => {
+            if (!active || callTranslationSessions.get(key) !== active) return;
+            emitCallTranslationEvent(io, active, event, app);
+            if (event.type === 'finished' || event.type === 'error') {
+              if (event.type === 'error') closeTranslationsForCall(callId);
+              else callTranslationSessions.delete(key);
+            }
+          };
+          let activeOutputAudio = outputAudio;
+          let session: AliyunRealtimeTranslationSession;
+          try {
+            session = await createAliyunRealtimeTranslationSession({
+              sourceLanguage,
+              targetLanguage,
+              outputAudio,
+              onEvent: onTranslationEvent,
+            });
+          } catch (error) {
+            if (!outputAudio || !isAliyunRealtimeAudioFallbackError(error)) throw error;
+            app.log.warn(
+              {
+                callId,
+                ...callTranslationSafeLogError(error),
+              },
+              'Friend call translated audio unavailable; falling back to realtime subtitles',
+            );
+            session = await createAliyunRealtimeTranslationSession({
+              sourceLanguage,
+              targetLanguage,
+              outputAudio: false,
+              onEvent: onTranslationEvent,
+            });
+            activeOutputAudio = false;
+          }
+          try {
+            const callRemainsActive = socket.connected
+              ? await prisma.friendCall.count({
+                  where: {
+                    id: callId,
+                    status: 'ACTIVE',
+                    AND: friendCallHeartbeatFreshWhere(new Date()),
+                    OR: [
+                      {
+                        callerId: sourceSubjectId,
+                        callerDeviceId: sourceDeviceId,
+                      },
+                      {
+                        calleeId: sourceSubjectId,
+                        calleeDeviceId: sourceDeviceId,
+                      },
+                    ],
+                  },
+                })
+              : 0;
+            if (!socket.connected || callRemainsActive !== 1) {
+              throw new AppError(
+                409,
+                'ACTIVE_FRIEND_CALL_NOT_FOUND',
+                '通话已经结束或已在其他设备接听',
+              );
+            }
+          } catch (error) {
+            session.abort();
+            throw error;
+          }
           active = {
             key,
             callId,
@@ -330,13 +383,22 @@ export async function attachRealtime(app: FastifyInstance): Promise<Server> {
             callId,
             sourceLanguage,
             targetLanguage,
-            outputAudio,
+            outputAudio: activeOutputAudio,
           };
           io.to(deviceRoomName(sourceSubjectId, sourceDeviceId))
             .to(deviceRoomName(targetSubjectId, targetDeviceId))
             .emit('friend.call.translation.ready', response);
           acknowledge?.({ ok: true, data: response });
         } catch (error) {
+          if (!(error instanceof AppError)) {
+            app.log.warn(
+              {
+                callId,
+                ...callTranslationSafeLogError(error),
+              },
+              'Friend call realtime translation start failed',
+            );
+          }
           const translated = callTranslationSocketError(error);
           acknowledge?.({ ok: false, error: translated });
           socket.emit('friend.call.translation.error', { callId, ...translated });
@@ -982,7 +1044,7 @@ function emitCallTranslationEvent(
   }
   if (event.type === 'error') {
     app.log.warn(
-      { callId: active.callId, code: event.code },
+      { callId: active.callId, code: safeCallTranslationDiagnostic(event.code) },
       'Friend call realtime translation failed',
     );
     io.to(deviceRoomName(active.sourceSubjectId, active.sourceDeviceId))
@@ -1013,6 +1075,29 @@ function emitCallTranslationEvent(
 
 function callLanguage(value: string): RealtimeTranslationLanguage {
   return value.toLowerCase() === 'ru' ? 'ru' : 'zh';
+}
+
+function callTranslationSafeLogError(error: unknown): Record<string, unknown> {
+  if (error instanceof AliyunRealtimeTranslationProtocolError) {
+    return {
+      errorName: error.name,
+      errorCode: safeCallTranslationDiagnostic(error.code),
+      errorParameter: safeCallTranslationDiagnostic(error.parameter),
+      errorPhase: error.phase,
+    };
+  }
+  if (error instanceof AliyunRealtimeTranslationNotConfiguredError) {
+    return { errorName: 'AliyunRealtimeTranslationNotConfiguredError' };
+  }
+  return {
+    errorName: error instanceof Error ? error.name : 'UnknownError',
+  };
+}
+
+function safeCallTranslationDiagnostic(value: string | undefined): string | undefined {
+  if (!value) return undefined;
+  const normalized = value.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 128);
+  return normalized || undefined;
 }
 
 function callTranslationSocketError(error: unknown): { code: string; message: string } {

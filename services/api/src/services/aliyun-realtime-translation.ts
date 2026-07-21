@@ -28,6 +28,13 @@ interface SessionOptions {
   onEvent: (event: RealtimeTranslationEvent) => void;
 }
 
+interface ProtocolErrorDetails {
+  code?: string;
+  parameter?: string;
+  phase?: 'connect' | 'session.update' | 'stream';
+  retryWithoutAudio?: boolean;
+}
+
 const connectTimeoutMs = 10_000;
 const finishTimeoutMs = 3_000;
 const maximumAudioFrameBytes = 12_800;
@@ -35,7 +42,48 @@ const maximumBufferedBytes = 512_000;
 const maximumAudioBytesPerSecond = 64_000;
 
 export class AliyunRealtimeTranslationNotConfiguredError extends Error {}
-export class AliyunRealtimeTranslationProtocolError extends Error {}
+export class AliyunRealtimeTranslationProtocolError extends Error {
+  readonly code?: string;
+  readonly parameter?: string;
+  readonly phase?: 'connect' | 'session.update' | 'stream';
+  readonly retryWithoutAudio: boolean;
+
+  constructor(message: string, details: ProtocolErrorDetails = {}) {
+    super(message);
+    this.name = 'AliyunRealtimeTranslationProtocolError';
+    this.code = details.code;
+    this.parameter = details.parameter;
+    this.phase = details.phase;
+    this.retryWithoutAudio = details.retryWithoutAudio ?? false;
+  }
+}
+
+export function isAliyunRealtimeAudioFallbackError(error: unknown): boolean {
+  return error instanceof AliyunRealtimeTranslationProtocolError && error.retryWithoutAudio;
+}
+
+export function buildAliyunRealtimeSessionUpdate(options: {
+  sourceLanguage: RealtimeTranslationLanguage;
+  targetLanguage: RealtimeTranslationLanguage;
+  outputAudio: boolean;
+}): Record<string, unknown> {
+  return {
+    event_id: eventId(),
+    type: 'session.update',
+    session: {
+      modalities: options.outputAudio ? ['text', 'audio'] : ['text'],
+      ...(options.outputAudio ? { voice: 'Tina' } : {}),
+      sample_rate: 16_000,
+      input_audio_format: 'pcm',
+      output_audio_format: 'pcm',
+      input_audio_transcription: {
+        model: 'qwen3-asr-flash-realtime',
+        language: options.sourceLanguage,
+      },
+      translation: { language: options.targetLanguage },
+    },
+  };
+}
 
 export async function realtimeTranslationAvailable(): Promise<boolean> {
   return (await resolveConfiguration({ strict: false })) !== null;
@@ -155,8 +203,19 @@ export class AliyunRealtimeTranslationSession {
 
   private async waitUntilReady(): Promise<void> {
     await new Promise<void>((resolve, reject) => {
+      let socketOpened = false;
       const timer = setTimeout(() => {
-        reject(new AliyunRealtimeTranslationProtocolError('Aliyun realtime session timed out'));
+        const sessionUpdateTimedOut = socketOpened && this.options.outputAudio;
+        settle(new AliyunRealtimeTranslationProtocolError(
+          socketOpened
+            ? 'Aliyun realtime session update timed out'
+            : 'Aliyun realtime connection timed out',
+          {
+            code: socketOpened ? 'SESSION_UPDATE_TIMEOUT' : 'CONNECTION_TIMEOUT',
+            phase: socketOpened ? 'session.update' : 'connect',
+            retryWithoutAudio: sessionUpdateTimedOut,
+          },
+        ));
         this.socket.terminate();
       }, connectTimeoutMs);
       timer.unref();
@@ -169,21 +228,8 @@ export class AliyunRealtimeTranslationSession {
         else resolve();
       };
       this.socket.on('open', () => {
-        this.send({
-          event_id: eventId(),
-          type: 'session.update',
-          session: {
-            modalities: this.options.outputAudio ? ['text', 'audio'] : ['text'],
-            sample_rate: 16_000,
-            input_audio_format: 'pcm',
-            output_audio_format: 'pcm',
-            input_audio_transcription: {
-              model: 'qwen3-asr-flash-realtime',
-              language: this.options.sourceLanguage,
-            },
-            translation: { language: this.options.targetLanguage },
-          },
-        });
+        socketOpened = true;
+        this.send(buildAliyunRealtimeSessionUpdate(this.options));
       });
       this.socket.on('message', (raw) => {
         try {
@@ -191,8 +237,20 @@ export class AliyunRealtimeTranslationSession {
           if (event.type === 'error' && !this.ready) {
             const detail = objectValue(event.error);
             const providerCode = stringValue(detail.code) || 'unknown_error';
+            const providerParameter = stringValue(detail.param) || stringValue(detail.parameter);
+            const providerMessage = stringValue(detail.message);
             const error = new AliyunRealtimeTranslationProtocolError(
               `Aliyun realtime session rejected (${providerCode})`,
+              {
+                code: safeProviderDiagnostic(providerCode),
+                parameter: safeProviderDiagnostic(providerParameter),
+                phase: 'session.update',
+                retryWithoutAudio: this.options.outputAudio && isAudioOutputRejection(
+                  providerCode,
+                  providerParameter,
+                  providerMessage,
+                ),
+              },
             );
             settle(error);
             this.socket.terminate();
@@ -225,7 +283,14 @@ export class AliyunRealtimeTranslationSession {
       this.socket.once('close', (code) => {
         const unexpected = this.ready && !this.finishing;
         if (!this.ready) {
-          settle(new AliyunRealtimeTranslationProtocolError(`Aliyun realtime socket closed (${code})`));
+          settle(new AliyunRealtimeTranslationProtocolError(
+            `Aliyun realtime socket closed (${code})`,
+            {
+              code: 'SOCKET_CLOSED',
+              phase: socketOpened ? 'session.update' : 'connect',
+              retryWithoutAudio: socketOpened && this.options.outputAudio,
+            },
+          ));
         }
         this.cleanup();
         if (unexpected) {
@@ -385,6 +450,22 @@ function stringValue(value: unknown): string {
 
 function boundedText(value: string): string {
   return value.trim().slice(0, 20_000);
+}
+
+function isAudioOutputRejection(code: string, parameter: string, message: string): boolean {
+  const detail = `${code} ${parameter} ${message}`.toLowerCase();
+  return [
+    'modalit',
+    'voice',
+    'output_audio',
+    'output audio',
+    'audio output',
+  ].some((marker) => detail.includes(marker));
+}
+
+function safeProviderDiagnostic(value: string): string | undefined {
+  const normalized = value.replace(/[^A-Za-z0-9._-]/g, '_').slice(0, 128);
+  return normalized || undefined;
 }
 
 function eventId(): string {
