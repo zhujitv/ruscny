@@ -5,6 +5,7 @@ import '../../core/errors.dart';
 import '../../core/localization/app_localization.dart';
 import '../../core/models.dart';
 import '../../core/providers.dart';
+import '../../core/validation.dart';
 import 'auth_controller.dart';
 
 final class LoginPage extends ConsumerStatefulWidget {
@@ -230,7 +231,7 @@ final class _LoginPageState extends ConsumerState<LoginPage> {
       );
 
   Future<void> _submitAccount() async {
-    if (!_email.text.contains('@') || _password.text.length < 8) {
+    if (!isValidEmail(_email.text) || _password.text.length < 8) {
       _snack('请输入有效邮箱和至少 8 位密码');
       return;
     }
@@ -274,7 +275,7 @@ final class _LoginPageState extends ConsumerState<LoginPage> {
   }
 
   Future<void> _resendVerification() async {
-    if (!_email.text.contains('@')) {
+    if (!isValidEmail(_email.text)) {
       _snack('请输入有效邮箱');
       return;
     }
@@ -290,7 +291,7 @@ final class _LoginPageState extends ConsumerState<LoginPage> {
   }
 
   Future<void> _forgotPassword() async {
-    if (!_email.text.contains('@')) {
+    if (!isValidEmail(_email.text)) {
       _snack('请输入有效邮箱');
       return;
     }

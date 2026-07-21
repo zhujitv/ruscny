@@ -3,6 +3,7 @@ import 'dart:async';
 import 'package:socket_io_client/socket_io_client.dart' as io;
 
 import '../models.dart';
+import 'reliable_web_socket.dart';
 
 enum RoomSocketStatus {
   connecting,
@@ -123,6 +124,7 @@ final class RoomRealtimeClient {
       socketUrl,
       io.OptionBuilder()
           .setTransports(['websocket'])
+          .setWebSocketConnector(connectReliableWebSocket)
           .setPath('/socket.io')
           .setAuthFn((callback) {
             unawaited(
@@ -360,10 +362,7 @@ final class RoomRealtimeClient {
       if (conversationId != null) {
         socket.emit('room.leave', {'conversationId': conversationId});
       }
-      socket
-        ..clearListeners()
-        ..disconnect()
-        ..dispose();
+      socket.dispose();
     }
   }
 

@@ -7,6 +7,7 @@ import '../../core/config.dart';
 import '../../core/errors.dart';
 import '../../core/models.dart';
 import '../../core/providers.dart';
+import '../../core/realtime/reliable_web_socket.dart';
 import '../auth/auth_controller.dart';
 
 final socialRealtimeProvider = StateNotifierProvider.autoDispose<
@@ -83,6 +84,7 @@ final class SocialRealtimeState {
     this.latestDirectConversationId,
     this.unreadDirectChatIds = const {},
     this.latestCall,
+    this.lastCallId,
   });
 
   final bool connected;
@@ -92,6 +94,7 @@ final class SocialRealtimeState {
   final String? latestDirectConversationId;
   final Set<String> unreadDirectChatIds;
   final FriendCallModel? latestCall;
+  final String? lastCallId;
 
   SocialRealtimeState copyWith({
     bool? connected,
@@ -103,6 +106,8 @@ final class SocialRealtimeState {
     bool clearInvitation = false,
     FriendCallModel? latestCall,
     bool clearCall = false,
+    String? lastCallId,
+    bool clearLastCallId = false,
   }) =>
       SocialRealtimeState(
         connected: connected ?? this.connected,
@@ -114,8 +119,40 @@ final class SocialRealtimeState {
             latestDirectConversationId ?? this.latestDirectConversationId,
         unreadDirectChatIds: unreadDirectChatIds ?? this.unreadDirectChatIds,
         latestCall: clearCall ? null : latestCall ?? this.latestCall,
+        lastCallId: clearLastCallId ? null : lastCallId ?? this.lastCallId,
       );
 }
+
+String? friendCallIdFromRealtimePayload(dynamic payload) {
+  Map<String, dynamic>? data;
+  if (payload is Map) {
+    data = payload.cast<String, dynamic>();
+  } else if (payload is List && payload.isNotEmpty && payload.first is Map) {
+    data = (payload.first as Map).cast<String, dynamic>();
+  } else {
+    try {
+      final nested = (payload as dynamic)?.data;
+      if (nested is Map) data = nested.cast<String, dynamic>();
+    } catch (_) {
+      // Socket payload wrappers do not have to expose a data property.
+    }
+  }
+  if (data == null) return null;
+  final direct = data['callId']?.toString().trim();
+  if (direct != null && direct.isNotEmpty) return direct;
+  final call = data['call'];
+  if (call is! Map) return null;
+  final nested = call['id']?.toString().trim();
+  return nested == null || nested.isEmpty ? null : nested;
+}
+
+bool friendCallEventMatches({
+  required String currentCallId,
+  required String? eventCallId,
+}) =>
+    eventCallId != null &&
+    eventCallId.isNotEmpty &&
+    eventCallId == currentCallId;
 
 final class SocialRealtimeController
     extends StateNotifier<SocialRealtimeState> {
@@ -146,6 +183,7 @@ final class SocialRealtimeController
       AppConfig.socketUrl,
       io.OptionBuilder()
           .setTransports(['websocket'])
+          .setWebSocketConnector(connectReliableWebSocket)
           .setPath('/socket.io')
           .setAuthFn((callback) {
             unawaited(
@@ -218,8 +256,13 @@ final class SocialRealtimeController
     socket.on('friend.call.accepted',
         (payload) => _markCallEvent('friend.call.accepted', payload));
     socket.on(
-        'friend.call.declined', (_) => _markCallClosed('friend.call.declined'));
-    socket.on('friend.call.ended', (_) => _markCallClosed('friend.call.ended'));
+      'friend.call.declined',
+      (payload) => _markCallClosed('friend.call.declined', payload),
+    );
+    socket.on(
+      'friend.call.ended',
+      (payload) => _markCallClosed('friend.call.ended', payload),
+    );
     for (final event in const [
       'friend.call.translation.ready',
       'friend.call.translation.text',
@@ -302,19 +345,27 @@ final class SocialRealtimeController
       }
     }
     if (_disposed) return;
+    final callId = parsed?.id.isNotEmpty == true
+        ? parsed!.id
+        : friendCallIdFromRealtimePayload(payload);
     state = state.copyWith(
       revision: state.revision + 1,
       lastEvent: event,
       latestCall: parsed,
+      lastCallId: callId,
+      clearLastCallId: callId == null,
     );
   }
 
-  void _markCallClosed(String event) {
+  void _markCallClosed(String event, dynamic payload) {
     if (_disposed) return;
+    final callId = friendCallIdFromRealtimePayload(payload);
     state = state.copyWith(
       revision: state.revision + 1,
       lastEvent: event,
       clearCall: true,
+      lastCallId: callId,
+      clearLastCallId: callId == null,
     );
   }
 
@@ -338,6 +389,7 @@ final class SocialRealtimeController
       lastEvent: event,
       latestDirectConversationId: conversationId,
       unreadDirectChatIds: unreadIds,
+      clearLastCallId: true,
     );
   }
 
@@ -347,6 +399,7 @@ final class SocialRealtimeController
       revision: state.revision + 1,
       lastEvent: event,
       latestInvitation: invitation,
+      clearLastCallId: true,
     );
   }
 
@@ -356,9 +409,7 @@ final class SocialRealtimeController
     try {
       await _recoverAuthentication();
       if (_disposed || _socket != socket) return;
-      socket
-        ..disconnect()
-        ..connect();
+      socket.connect();
     } catch (_) {
       if (!_disposed) await _authenticationLost();
     } finally {
@@ -394,10 +445,7 @@ final class SocialRealtimeController
     _disposed = true;
     final socket = _socket;
     _socket = null;
-    socket
-      ?..clearListeners()
-      ..disconnect()
-      ..dispose();
+    socket?.dispose();
     unawaited(_callTranslationEvents.close());
     super.dispose();
   }

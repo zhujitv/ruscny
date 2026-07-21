@@ -160,6 +160,31 @@ void main() {
     expect(Conversation.fromJson(conversation.toJson()).isDirect, isTrue);
   });
 
+  test(
+      'friend call parses video media type and defaults older signals to audio',
+      () {
+    Map<String, dynamic> callJson({String? mediaType}) => {
+          'id': 'call-1',
+          'direction': 'INCOMING',
+          'status': 'RINGING',
+          if (mediaType != null) 'mediaType': mediaType,
+          'createdAt': '2026-07-21T10:00:00Z',
+          'peer': {
+            'id': 'user-2',
+            'displayName': 'Ivan',
+          },
+        };
+
+    final video = FriendCallModel.fromJson(callJson(mediaType: 'VIDEO'));
+    final legacyAudio = FriendCallModel.fromJson(callJson());
+
+    expect(video.mediaType, FriendCallMediaType.video);
+    expect(video.mediaType.isVideo, isTrue);
+    expect(video.mediaType.incomingTitle, '好友视频来电');
+    expect(legacyAudio.mediaType, FriendCallMediaType.audio);
+    expect(FriendCallMediaType.audio.wireValue, 'AUDIO');
+  });
+
   test('meeting summary keeps participant and speaker attribution', () {
     final summary = MeetingSummary.fromJson({
       'summary': '报价讨论',

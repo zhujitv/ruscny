@@ -19,6 +19,7 @@ import { realtimeTranslationAvailable } from '../services/aliyun-realtime-transl
 import {
   friendCallHeartbeatExpired,
   friendCallHeartbeatExpiredWhere,
+  friendCallHeartbeatFreshWhere,
 } from '../services/friend-call-liveness.js';
 import { subjectCredentialRateLimit } from './social.js';
 
@@ -349,7 +350,7 @@ export async function registerFriendCallRoutes(app: FastifyInstance): Promise<vo
           id,
           status: 'ACTIVE',
           AND: [
-            { NOT: friendCallHeartbeatExpiredWhere(now) },
+            friendCallHeartbeatFreshWhere(now),
             {
               OR: [
                 { callerId: request.auth.subjectId, callerDeviceId: request.auth.deviceId },
@@ -441,7 +442,7 @@ export async function registerFriendCallRoutes(app: FastifyInstance): Promise<vo
         id,
         status: 'ACTIVE',
         AND: [
-          { NOT: friendCallHeartbeatExpiredWhere(now) },
+          friendCallHeartbeatFreshWhere(now),
           {
             OR: [
               { callerId: request.auth.subjectId, callerDeviceId: request.auth.deviceId },

@@ -179,11 +179,11 @@ final class _FriendsPageState extends ConsumerState<FriendsPage>
                               crossAxisAlignment: CrossAxisAlignment.start,
                               children: [
                                 AppText(
-                                  '好友实时语音翻译',
+                                  '好友实时音视频翻译',
                                   style: TextStyle(fontWeight: FontWeight.w700),
                                 ),
                                 SizedBox(height: 4),
-                                AppText('选择好友，点击“实时翻译通话”即可拨打。'),
+                                AppText('拨打时可选择语音或视频，通话中实时翻译双方语音。'),
                               ],
                             ),
                           ),
@@ -223,7 +223,7 @@ final class _FriendsPageState extends ConsumerState<FriendsPage>
                             Expanded(
                               child: FilledButton.tonalIcon(
                                 onPressed: _callingFriendId == null
-                                    ? () => _startVoiceCall(friend)
+                                    ? () => _chooseCallType(friend)
                                     : null,
                                 icon: _callingFriendId == friend.id
                                     ? const SizedBox.square(
@@ -491,12 +491,63 @@ final class _FriendsPageState extends ConsumerState<FriendsPage>
     }
   }
 
-  Future<void> _startVoiceCall(UserProfile friend) async {
+  Future<void> _chooseCallType(UserProfile friend) async {
+    if (_callingFriendId != null) return;
+    final mediaType = await showModalBottomSheet<FriendCallMediaType>(
+      context: context,
+      showDragHandle: true,
+      builder: (sheetContext) => SafeArea(
+        child: Padding(
+          padding: const EdgeInsets.fromLTRB(20, 0, 20, 20),
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              AppText(
+                '呼叫 ${friend.displayName}',
+                style: Theme.of(sheetContext).textTheme.titleLarge,
+              ),
+              const SizedBox(height: 8),
+              const AppText('选择实时翻译通话方式'),
+              const SizedBox(height: 12),
+              ListTile(
+                leading: const CircleAvatar(child: Icon(Icons.call)),
+                title: const AppText('语音通话'),
+                subtitle: const AppText('仅使用麦克风，流量更低'),
+                onTap: () => Navigator.pop(
+                  sheetContext,
+                  FriendCallMediaType.audio,
+                ),
+              ),
+              ListTile(
+                leading: const CircleAvatar(child: Icon(Icons.videocam)),
+                title: const AppText('视频通话'),
+                subtitle: const AppText('显示双方画面，并实时翻译语音'),
+                onTap: () => Navigator.pop(
+                  sheetContext,
+                  FriendCallMediaType.video,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (mediaType == null || !mounted) return;
+    await _startCall(friend, mediaType);
+  }
+
+  Future<void> _startCall(
+    UserProfile friend,
+    FriendCallMediaType mediaType,
+  ) async {
     if (_callingFriendId != null) return;
     setState(() => _callingFriendId = friend.id);
     try {
-      final call =
-          await ref.read(friendRepositoryProvider).startCall(friend.id);
+      final call = await ref.read(friendRepositoryProvider).startCall(
+            friend.id,
+            mediaType: mediaType,
+          );
       if (!mounted) return;
       await Navigator.push<void>(
         context,

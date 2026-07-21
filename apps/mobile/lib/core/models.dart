@@ -704,6 +704,21 @@ final class UserProfile {
       );
 }
 
+enum FriendCallMediaType {
+  audio,
+  video;
+
+  String get wireValue => name.toUpperCase();
+  bool get isVideo => this == FriendCallMediaType.video;
+  String get label => isVideo ? '视频通话' : '语音通话';
+  String get incomingTitle => isVideo ? '好友视频来电' : '好友语音来电';
+
+  static FriendCallMediaType fromWire(Object? value) =>
+      value?.toString().toUpperCase() == 'VIDEO'
+          ? FriendCallMediaType.video
+          : FriendCallMediaType.audio;
+}
+
 final class FriendCallModel {
   const FriendCallModel({
     required this.id,
@@ -711,6 +726,7 @@ final class FriendCallModel {
     required this.status,
     required this.peer,
     required this.createdAt,
+    this.mediaType = FriendCallMediaType.audio,
     this.acceptedAt,
     this.endedAt,
   });
@@ -720,6 +736,7 @@ final class FriendCallModel {
   final String status;
   final UserProfile peer;
   final DateTime createdAt;
+  final FriendCallMediaType mediaType;
   final DateTime? acceptedAt;
   final DateTime? endedAt;
 
@@ -735,6 +752,7 @@ final class FriendCallModel {
           (json['peer'] as Map?)?.cast<String, dynamic>() ?? const {},
         ),
         createdAt: _date(json['createdAt']),
+        mediaType: FriendCallMediaType.fromWire(json['mediaType']),
         acceptedAt:
             json['acceptedAt'] == null ? null : _date(json['acceptedAt']),
         endedAt: json['endedAt'] == null ? null : _date(json['endedAt']),

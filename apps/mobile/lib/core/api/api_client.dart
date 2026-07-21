@@ -255,9 +255,11 @@ final class ApiClient {
   AppException _readError(DioException error) {
     final body = error.response?.data;
     if (body is Map) {
+      final code = body['code']?.toString();
       return AppException(
-        (body['message'] ?? body['error'] ?? '请求失败').toString(),
-        code: body['code']?.toString(),
+        _validationMessage(body, code) ??
+            (body['message'] ?? body['error'] ?? '请求失败').toString(),
+        code: code,
         statusCode: error.response?.statusCode,
       );
     }
@@ -273,5 +275,19 @@ final class ApiClient {
       error.message ?? '网络请求失败',
       statusCode: error.response?.statusCode,
     );
+  }
+
+  static String? _validationMessage(Map<dynamic, dynamic> body, String? code) {
+    if (code != 'VALIDATION_ERROR') return null;
+    final details = body['details'];
+    if (details is! Map) return null;
+    final fieldErrors = details['fieldErrors'];
+    if (fieldErrors is! Map) return null;
+    if (fieldErrors['email'] is List) return '请输入有效邮箱';
+    if (fieldErrors['password'] is List) return '密码必须为 8–128 位';
+    if (fieldErrors['deviceId'] is List || fieldErrors['platform'] is List) {
+      return '设备信息无效，请重启 App 后重试';
+    }
+    return null;
   }
 }

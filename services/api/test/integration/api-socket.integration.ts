@@ -7,6 +7,11 @@ import {
   emailVerificationTokenHash,
   userPasswordResetTokenHash,
 } from '../../src/services/account-emails.js';
+import {
+  friendCallActiveHeartbeatTimeoutMs,
+  friendCallHeartbeatExpiredWhere,
+  friendCallHeartbeatFreshWhere,
+} from '../../src/services/friend-call-liveness.js';
 
 interface Session {
   accessToken: string;
@@ -37,6 +42,69 @@ afterAll(async () => {
 });
 
 describe.sequential('PostgreSQL API isolation and concurrency', () => {
+  it('keeps NULL-heartbeat calls fresh during the post-acceptance grace period', async () => {
+    const caller = await register('liveness-caller', 'zh');
+    const callee = await register('liveness-callee', 'ru');
+    const now = new Date();
+    const stale = new Date(
+      now.getTime() - friendCallActiveHeartbeatTimeoutMs - 1_000,
+    );
+    const call = await prisma.friendCall.create({
+      data: {
+        callerId: caller.user.id,
+        calleeId: callee.user.id,
+        callerDeviceId: deviceId('liveness-caller'),
+        calleeDeviceId: deviceId('liveness-callee'),
+        channelId: `integration-friend-call-${++counter}`,
+        status: 'ACTIVE',
+        mediaType: 'VIDEO',
+        livenessVersion: 2,
+        acceptedAt: now,
+        lastHeartbeatAt: now,
+      },
+    });
+
+    await expectLivenessMatches(call.id, now, { expired: 0, fresh: 1 });
+    const refreshed = await prisma.friendCall.updateMany({
+      where: {
+        id: call.id,
+        status: 'ACTIVE',
+        AND: friendCallHeartbeatFreshWhere(now),
+      },
+      data: { lastHeartbeatAt: now },
+    });
+    expect(refreshed.count).toBe(1);
+
+    await prisma.friendCall.update({
+      where: { id: call.id },
+      data: {
+        acceptedAt: stale,
+        callerHeartbeatAt: null,
+        calleeHeartbeatAt: null,
+      },
+    });
+    await expectLivenessMatches(call.id, now, { expired: 1, fresh: 0 });
+
+    await prisma.friendCall.update({
+      where: { id: call.id },
+      data: {
+        callerHeartbeatAt: now,
+        calleeHeartbeatAt: now,
+      },
+    });
+    await expectLivenessMatches(call.id, now, { expired: 0, fresh: 1 });
+
+    await prisma.friendCall.update({
+      where: { id: call.id },
+      data: {
+        acceptedAt: now,
+        callerHeartbeatAt: stale,
+        calleeHeartbeatAt: now,
+      },
+    });
+    await expectLivenessMatches(call.id, now, { expired: 1, fresh: 0 });
+  });
+
   it('requires email activation and revokes every session after an emailed password reset', async () => {
     const label = `email-flow-${++counter}`;
     const email = `${label}@example.test`;
@@ -930,6 +998,22 @@ describe.sequential('Socket.IO authentication and backfill', () => {
     socket.close();
   });
 });
+
+async function expectLivenessMatches(
+  callId: string,
+  now: Date,
+  expected: { expired: number; fresh: number },
+): Promise<void> {
+  const [expired, fresh] = await Promise.all([
+    prisma.friendCall.count({
+      where: { id: callId, ...friendCallHeartbeatExpiredWhere(now) },
+    }),
+    prisma.friendCall.count({
+      where: { id: callId, ...friendCallHeartbeatFreshWhere(now) },
+    }),
+  ]);
+  expect({ expired, fresh }).toEqual(expected);
+}
 
 async function register(
   label: string,

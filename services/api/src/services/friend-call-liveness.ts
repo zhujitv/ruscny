@@ -61,3 +61,49 @@ export function friendCallHeartbeatExpiredWhere(
     ],
   };
 }
+
+/**
+ * NULL-safe inverse of friendCallHeartbeatExpiredWhere.
+ *
+ * Do not express this as Prisma `NOT: friendCallHeartbeatExpiredWhere(now)`.
+ * PostgreSQL comparisons against a NULL heartbeat evaluate to UNKNOWN, so the
+ * negated predicate also evaluates to UNKNOWN and excludes a newly accepted
+ * strict-liveness call before either side can establish its first heartbeat.
+ */
+export function friendCallHeartbeatFreshWhere(
+  now: Date,
+): Prisma.FriendCallWhereInput {
+  const cutoff = new Date(now.getTime() - friendCallActiveHeartbeatTimeoutMs);
+  return {
+    OR: [
+      {
+        livenessVersion: { lt: 2 },
+        lastHeartbeatAt: { gt: cutoff },
+      },
+      {
+        livenessVersion: { gte: 2 },
+        acceptedAt: { not: null },
+        AND: [
+          {
+            OR: [
+              { callerHeartbeatAt: { gt: cutoff } },
+              {
+                callerHeartbeatAt: null,
+                acceptedAt: { gt: cutoff },
+              },
+            ],
+          },
+          {
+            OR: [
+              { calleeHeartbeatAt: { gt: cutoff } },
+              {
+                calleeHeartbeatAt: null,
+                acceptedAt: { gt: cutoff },
+              },
+            ],
+          },
+        ],
+      },
+    ],
+  };
+}
