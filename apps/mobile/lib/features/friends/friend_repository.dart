@@ -1,4 +1,5 @@
 import '../../core/api/api_client.dart';
+import '../../core/errors.dart';
 import '../../core/models.dart';
 
 final class FriendRepository {
@@ -66,9 +67,17 @@ final class FriendRepository {
         .toList(growable: false);
   }
 
-  Future<FriendCallModel> startCall(String friendId) async {
-    final payload =
-        await _api.postMap('/friend-calls', data: {'friendId': friendId});
+  Future<FriendCallModel> startCall(
+    String friendId, {
+    FriendCallMediaType mediaType = FriendCallMediaType.audio,
+  }) async {
+    final payload = await _api.postMap(
+      '/friend-calls',
+      data: {
+        'friendId': friendId,
+        'mediaType': mediaType.wireValue,
+      },
+    );
     return _readCall(payload);
   }
 
@@ -80,11 +89,17 @@ final class FriendRepository {
         : null;
   }
 
-  Future<FriendCallModel> respondToCall(String callId,
-      {required bool accept}) async {
+  Future<FriendCallModel> respondToCall(
+    String callId, {
+    required bool accept,
+    FriendCallMediaType? mediaType,
+  }) async {
     final payload = await _api.postMap(
       '/friend-calls/${Uri.encodeComponent(callId)}/respond',
-      data: {'action': accept ? 'ACCEPT' : 'DECLINE'},
+      data: {
+        'action': accept ? 'ACCEPT' : 'DECLINE',
+        if (accept && mediaType != null) 'mediaType': mediaType.wireValue,
+      },
     );
     return _readCall(payload);
   }
@@ -93,13 +108,26 @@ final class FriendRepository {
     await _api.postMap('/friend-calls/${Uri.encodeComponent(callId)}/end');
   }
 
-  Future<RtcCredential> rtcCredential(String callId) async {
+  Future<RtcCredential> rtcCredential(
+    String callId, {
+    required FriendCallMediaType mediaType,
+  }) async {
     final payload = await _api.postMap(
       '/friend-calls/${Uri.encodeComponent(callId)}/rtc-credential',
+      data: {'mediaType': mediaType.wireValue},
     );
     final credential = payload['credential'];
     if (credential is! Map) throw const FormatException('RTC 响应缺少鉴权信息');
-    return RtcCredential.fromJson(credential.cast<String, dynamic>());
+    final credentialJson = credential.cast<String, dynamic>();
+    final negotiatedMediaType = credentialJson['mediaType']?.toString().trim();
+    if (negotiatedMediaType == null ||
+        negotiatedMediaType.toUpperCase() != mediaType.wireValue) {
+      throw const AppException(
+        '通话媒体类型已变化，请重新进入通话',
+        code: 'FRIEND_CALL_MEDIA_TYPE_CHANGED',
+      );
+    }
+    return RtcCredential.fromJson(credentialJson);
   }
 
   Future<void> heartbeatCall(String callId) async {

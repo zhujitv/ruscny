@@ -80,6 +80,37 @@ void main() {
       'Не удалось авторизовать голосовой сервис. Позвоните ещё раз',
     );
     expect(
+      AppLocalization.translateForLocale('好友视频来电', locale),
+      'Входящий видеозвонок от друга',
+    );
+    expect(
+      AppLocalization.translateForLocale('呼叫 Иван', locale),
+      'Позвонить: Иван',
+    );
+    expect(
+      AppLocalization.translateForLocale('关摄像头', locale),
+      'Выключить камеру',
+    );
+    expect(
+      AppLocalization.translateForLocale('等待对方连接', locale),
+      'Ожидание подключения собеседника',
+    );
+    expect(
+      AppLocalization.translateForLocale(
+        '摄像头不可用，已切换为仅接收对方视频',
+        locale,
+      ),
+      'Камера недоступна. '
+      'Вы будете только получать видео собеседника',
+    );
+    expect(
+      AppLocalization.translateForLocale(
+        '实时通话服务鉴权失败，请重新拨打',
+        locale,
+      ),
+      'Не удалось авторизовать сервис звонков. Позвоните ещё раз',
+    );
+    expect(
       AppLocalization.translateForLocale('待确认纠错', locale),
       'Исправление ожидает подтверждения',
     );

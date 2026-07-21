@@ -67,4 +67,19 @@ void main() {
     await tester.pumpAndSettle();
     expect(find.text('Быстрый вход'), findsOneWidget);
   });
+
+  testWidgets('rejects a malformed email before sending login', (tester) async {
+    await tester.pumpWidget(
+      const ProviderScope(
+        child: MaterialApp(home: LoginPage()),
+      ),
+    );
+
+    await tester.enterText(find.byType(TextField).at(0), 'user@example');
+    await tester.enterText(find.byType(TextField).at(1), 'password123');
+    await tester.tap(find.text('登录'));
+    await tester.pump();
+
+    expect(find.text('请输入有效邮箱和至少 8 位密码'), findsOneWidget);
+  });
 }
