@@ -63,6 +63,20 @@ export function isAliyunRealtimeAudioFallbackError(error: unknown): boolean {
   return error instanceof AliyunRealtimeTranslationProtocolError && error.retryWithoutAudio;
 }
 
+const droppableAudioErrorCodes = new Set([
+  'INVALID_SEQUENCE',
+  'INVALID_PCM_FRAME',
+  'INPUT_RATE_LIMIT',
+  'UPSTREAM_CONGESTED',
+]);
+
+export function isAliyunRealtimeDroppableAudioError(error: unknown): boolean {
+  return error instanceof AliyunRealtimeTranslationProtocolError &&
+    error.phase === 'stream' &&
+    typeof error.code === 'string' &&
+    droppableAudioErrorCodes.has(error.code);
+}
+
 export function buildAliyunRealtimeSessionUpdate(options: {
   sourceLanguage: RealtimeTranslationLanguage;
   targetLanguage: RealtimeTranslationLanguage;
@@ -147,13 +161,22 @@ export class AliyunRealtimeTranslationSession {
 
   appendAudio(audio: Buffer, sequence: number): void {
     if (!this.ready || this.finishing || this.finished) {
-      throw new AliyunRealtimeTranslationProtocolError('Realtime translation session is not writable');
+      throw new AliyunRealtimeTranslationProtocolError(
+        'Realtime translation session is not writable',
+        { code: 'SESSION_NOT_WRITABLE', phase: 'stream' },
+      );
     }
     if (!Number.isSafeInteger(sequence) || sequence <= this.lastSequence) {
-      throw new AliyunRealtimeTranslationProtocolError('Audio sequence is invalid');
+      throw new AliyunRealtimeTranslationProtocolError(
+        'Audio sequence is invalid',
+        { code: 'INVALID_SEQUENCE', phase: 'stream' },
+      );
     }
     if (audio.length === 0 || audio.length > maximumAudioFrameBytes || audio.length % 2 !== 0) {
-      throw new AliyunRealtimeTranslationProtocolError('PCM audio frame is invalid');
+      throw new AliyunRealtimeTranslationProtocolError(
+        'PCM audio frame is invalid',
+        { code: 'INVALID_PCM_FRAME', phase: 'stream' },
+      );
     }
     const now = Date.now();
     if (now - this.audioWindowStartedAt >= 1_000) {
@@ -162,10 +185,16 @@ export class AliyunRealtimeTranslationSession {
     }
     this.audioBytesInWindow += audio.length;
     if (this.audioBytesInWindow > maximumAudioBytesPerSecond) {
-      throw new AliyunRealtimeTranslationProtocolError('PCM audio rate limit exceeded');
+      throw new AliyunRealtimeTranslationProtocolError(
+        'PCM audio rate limit exceeded',
+        { code: 'INPUT_RATE_LIMIT', phase: 'stream' },
+      );
     }
     if (this.socket.bufferedAmount > maximumBufferedBytes) {
-      throw new AliyunRealtimeTranslationProtocolError('Realtime translation upstream is congested');
+      throw new AliyunRealtimeTranslationProtocolError(
+        'Realtime translation upstream is congested',
+        { code: 'UPSTREAM_CONGESTED', phase: 'stream' },
+      );
     }
     this.lastSequence = sequence;
     this.send({
@@ -372,7 +401,13 @@ export class AliyunRealtimeTranslationSession {
 
   private send(payload: Record<string, unknown>): void {
     if (this.socket.readyState !== WebSocket.OPEN) {
-      throw new AliyunRealtimeTranslationProtocolError('Aliyun realtime socket is not open');
+      throw new AliyunRealtimeTranslationProtocolError(
+        'Aliyun realtime socket is not open',
+        {
+          code: 'SOCKET_NOT_OPEN',
+          phase: this.ready ? 'stream' : 'session.update',
+        },
+      );
     }
     this.socket.send(JSON.stringify(payload));
   }

@@ -29,6 +29,7 @@ import {
   AliyunRealtimeTranslationProtocolError,
   createAliyunRealtimeTranslationSession,
   isAliyunRealtimeAudioFallbackError,
+  isAliyunRealtimeDroppableAudioError,
   type AliyunRealtimeTranslationSession,
   type RealtimeTranslationEvent,
   type RealtimeTranslationLanguage,
@@ -42,6 +43,8 @@ import {
   safeCallTranslationClientReason,
 } from './services/call-translation-lifecycle.js';
 import {
+  CallTranslationAudioDropTracker,
+  CallTranslationAudioQueueOverflowError,
   SerializedCallTranslationAudioQueue,
   chunkPcm16Base64Audio,
 } from './services/call-translation-audio.js';
@@ -81,6 +84,9 @@ interface ActiveCallTranslation {
   audioQueue: SerializedCallTranslationAudioQueue;
   startedAt: number;
   lastAuthorizedAt: number;
+  lastAudioDropLogAt: number;
+  droppedAudioFrames: number;
+  audioDropTracker: CallTranslationAudioDropTracker;
 }
 
 export async function attachRealtime(app: FastifyInstance): Promise<Server> {
@@ -392,6 +398,9 @@ export async function attachRealtime(app: FastifyInstance): Promise<Server> {
             audioQueue: new SerializedCallTranslationAudioQueue(),
             startedAt: Date.now(),
             lastAuthorizedAt: Date.now(),
+            lastAudioDropLogAt: 0,
+            droppedAudioFrames: 0,
+            audioDropTracker: new CallTranslationAudioDropTracker(),
           };
           callTranslationSessions.set(key, active);
           app.log.info(
@@ -468,11 +477,43 @@ export async function attachRealtime(app: FastifyInstance): Promise<Server> {
           audio.length > 20_000 ||
           !/^[A-Za-z0-9+/]*={0,2}$/.test(audio)
         ) {
-          throw new AliyunRealtimeTranslationProtocolError('PCM audio payload is invalid');
+          throw new AliyunRealtimeTranslationProtocolError(
+            'PCM audio payload is invalid',
+            { code: 'INVALID_CLIENT_PAYLOAD', phase: 'stream' },
+          );
         }
         active.session.appendAudio(Buffer.from(audio, 'base64'), sequence);
+        active.audioDropTracker.recordSuccess();
       }).catch((error) => {
         if (callTranslationSessions.get(key) !== active) return;
+        const droppable =
+          isAliyunRealtimeDroppableAudioError(error) ||
+          error instanceof CallTranslationAudioQueueOverflowError;
+        if (droppable) {
+          active.droppedAudioFrames += 1;
+          const now = Date.now();
+          const drop = active.audioDropTracker.recordDrop(now);
+          if (now - active.lastAudioDropLogAt >= 1_000) {
+            app.log.warn(
+              {
+                ...callTranslationLifecycleDiagnostic(
+                  active,
+                  'audio_frame_dropped',
+                  now,
+                ),
+                ...callTranslationSafeLogError(error),
+                droppedAudioFrames: active.droppedAudioFrames,
+                dropDurationMs: drop.durationMs,
+              },
+              'Friend call realtime translation audio frame dropped',
+            );
+            active.lastAudioDropLogAt = now;
+            active.droppedAudioFrames = 0;
+          }
+          if (!drop.shouldInterrupt) {
+            return;
+          }
+        }
         app.log.warn(
           {
             ...callTranslationLifecycleDiagnostic(active, 'audio_append_failed'),
@@ -1169,6 +1210,12 @@ function callTranslationSafeLogError(error: unknown): Record<string, unknown> {
   }
   if (error instanceof AliyunRealtimeTranslationNotConfiguredError) {
     return { errorName: 'AliyunRealtimeTranslationNotConfiguredError' };
+  }
+  if (error instanceof CallTranslationAudioQueueOverflowError) {
+    return {
+      errorName: error.name,
+      errorCode: 'AUDIO_QUEUE_OVERFLOW',
+    };
   }
   return {
     errorName: error instanceof Error ? error.name : 'UnknownError',

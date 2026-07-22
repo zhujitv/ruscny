@@ -5,6 +5,7 @@ export type CallTranslationLifecycleEvent =
   | 'provider_error'
   | 'provider_finished'
   | 'audio_append_failed'
+  | 'audio_frame_dropped'
   | 'source_client_finished'
   | 'source_socket_disconnected';
 

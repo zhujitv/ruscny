@@ -1,5 +1,41 @@
 export const MAX_CALL_TRANSLATION_AUDIO_CHUNK_BYTES = 96_000;
 export const MAX_PENDING_CALL_TRANSLATION_AUDIO_TASKS = 50;
+export const MAX_CONTINUOUS_CALL_TRANSLATION_AUDIO_DROP_MS = 5_000;
+
+export class CallTranslationAudioDropTracker {
+  private startedAt: number | null = null;
+
+  constructor(
+    private readonly maximumContinuousDropMs =
+      MAX_CONTINUOUS_CALL_TRANSLATION_AUDIO_DROP_MS,
+  ) {
+    if (
+      !Number.isSafeInteger(maximumContinuousDropMs) ||
+      maximumContinuousDropMs < 1
+    ) {
+      throw new RangeError('Call translation audio drop limit is invalid');
+    }
+  }
+
+  recordDrop(now = Date.now()): {
+    durationMs: number;
+    shouldInterrupt: boolean;
+  } {
+    if (!Number.isFinite(now)) {
+      throw new RangeError('Call translation audio drop time is invalid');
+    }
+    this.startedAt ??= now;
+    const durationMs = Math.max(0, Math.floor(now - this.startedAt));
+    return {
+      durationMs,
+      shouldInterrupt: durationMs >= this.maximumContinuousDropMs,
+    };
+  }
+
+  recordSuccess(): void {
+    this.startedAt = null;
+  }
+}
 
 export class CallTranslationAudioQueueOverflowError extends Error {
   constructor() {

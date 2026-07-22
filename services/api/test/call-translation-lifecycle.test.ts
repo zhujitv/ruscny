@@ -29,6 +29,20 @@ describe('friend call translation lifecycle helpers', () => {
     });
   });
 
+  it('labels a dropped realtime audio frame without participant data', () => {
+    expect(callTranslationLifecycleDiagnostic({
+      callId: 'call-safe',
+      sourceLanguage: 'ru',
+      targetLanguage: 'zh',
+      startedAt: 1_000,
+    }, 'audio_frame_dropped', 1_250)).toEqual({
+      callId: 'call-safe',
+      direction: 'ru_to_zh',
+      durationMs: 250,
+      translationEvent: 'audio_frame_dropped',
+    });
+  });
+
   it('clamps invalid or negative lifecycle durations', () => {
     expect(callTranslationLifecycleDiagnostic({
       callId: 'call-1',

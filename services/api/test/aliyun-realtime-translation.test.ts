@@ -3,6 +3,7 @@ import {
   AliyunRealtimeTranslationProtocolError,
   buildAliyunRealtimeSessionUpdate,
   isAliyunRealtimeAudioFallbackError,
+  isAliyunRealtimeDroppableAudioError,
 } from '../src/services/aliyun-realtime-translation.js';
 
 describe('Aliyun realtime translation session protocol', () => {
@@ -62,6 +63,37 @@ describe('Aliyun realtime translation session protocol', () => {
           retryWithoutAudio: false,
         },
       ),
+    )).toBe(false);
+  });
+
+  it('only drops isolated realtime audio-frame pressure errors', () => {
+    for (const code of [
+      'INVALID_SEQUENCE',
+      'INVALID_PCM_FRAME',
+      'INPUT_RATE_LIMIT',
+      'UPSTREAM_CONGESTED',
+    ]) {
+      expect(isAliyunRealtimeDroppableAudioError(
+        new AliyunRealtimeTranslationProtocolError('safe diagnostic', {
+          code,
+          phase: 'stream',
+        }),
+      )).toBe(true);
+    }
+
+    for (const code of ['SESSION_NOT_WRITABLE', 'SOCKET_NOT_OPEN']) {
+      expect(isAliyunRealtimeDroppableAudioError(
+        new AliyunRealtimeTranslationProtocolError('safe diagnostic', {
+          code,
+          phase: 'stream',
+        }),
+      )).toBe(false);
+    }
+    expect(isAliyunRealtimeDroppableAudioError(
+      new AliyunRealtimeTranslationProtocolError('safe diagnostic', {
+        code: 'UPSTREAM_CONGESTED',
+        phase: 'session.update',
+      }),
     )).toBe(false);
   });
 });

@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  CallTranslationAudioDropTracker,
   CallTranslationAudioQueueOverflowError,
   MAX_CALL_TRANSLATION_AUDIO_CHUNK_BYTES,
   SerializedCallTranslationAudioQueue,
@@ -8,6 +9,34 @@ import {
 } from '../src/services/call-translation-audio.js';
 
 describe('friend call translated PCM16 audio chunking', () => {
+  it('interrupts only after continuous drops reach the configured limit', () => {
+    const tracker = new CallTranslationAudioDropTracker(5_000);
+
+    expect(tracker.recordDrop(10_000)).toEqual({
+      durationMs: 0,
+      shouldInterrupt: false,
+    });
+    expect(tracker.recordDrop(14_999)).toEqual({
+      durationMs: 4_999,
+      shouldInterrupt: false,
+    });
+    expect(tracker.recordDrop(15_000)).toEqual({
+      durationMs: 5_000,
+      shouldInterrupt: true,
+    });
+  });
+
+  it('resets the continuous drop window after one successful append', () => {
+    const tracker = new CallTranslationAudioDropTracker(5_000);
+    tracker.recordDrop(10_000);
+    tracker.recordSuccess();
+
+    expect(tracker.recordDrop(20_000)).toEqual({
+      durationMs: 0,
+      shouldInterrupt: false,
+    });
+  });
+
   it('returns no Socket.IO packets for empty audio', () => {
     expect(chunkPcm16Base64Audio('')).toEqual([]);
   });
