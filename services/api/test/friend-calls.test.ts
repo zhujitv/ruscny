@@ -14,7 +14,6 @@ const mocks = vi.hoisted(() => {
     $queryRaw: vi.fn(),
     friendCall,
     friendship: { findUnique: vi.fn() },
-    friendCallPushJob: { createMany: vi.fn() },
   };
   return {
     transaction,
@@ -124,7 +123,6 @@ beforeEach(async () => {
   ]);
   mocks.friendCall.updateMany.mockResolvedValue({ count: 1 });
   mocks.friendCall.updateManyAndReturn.mockResolvedValue([]);
-  mocks.transaction.friendCallPushJob.createMany.mockResolvedValue({ count: 1 });
   mocks.realtimeTranslationAvailable.mockResolvedValue(true);
   Object.assign(mocks.auth, {
     subjectId: 'user-a',
@@ -179,15 +177,6 @@ describe('friend call state and device ownership', () => {
       }),
     );
     expect(response.json().data.call.mediaType).toBe('AUDIO');
-    expect(mocks.transaction.friendCallPushJob.createMany).toHaveBeenCalledWith({
-      data: [expect.objectContaining({
-        callId: 'call-1',
-        recipientUserId: 'user-b',
-        kind: 'INCOMING',
-        expiresAt: expect.any(Date),
-      })],
-      skipDuplicates: true,
-    });
     expect(mocks.emitToSubject).toHaveBeenCalledWith(
       'user-b',
       'friend.call.incoming',
@@ -339,14 +328,6 @@ describe('friend call state and device ownership', () => {
       'friend.call.ended',
       { callId: 'call-1', status: 'MISSED', mediaType: 'AUDIO' },
     );
-    expect(mocks.transaction.friendCallPushJob.createMany).toHaveBeenCalledWith({
-      data: [expect.objectContaining({
-        callId: 'call-1',
-        recipientUserId: 'user-a',
-        kind: 'CANCEL',
-      })],
-      skipDuplicates: true,
-    });
     expect(mocks.emitToSubject).toHaveBeenCalledWith(
       'user-b',
       'friend.call.ended',

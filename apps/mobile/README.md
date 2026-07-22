@@ -17,38 +17,6 @@ flutter run \
 
 The Android build decodes Flutter's forwarded `APP_LINK_HOST` define into the native manifest placeholder as well, keeping Dart routing and the verified App Link host aligned. iOS Associated Domains remains an explicit signed entitlement and must be configured per release scheme.
 
-## Background incoming-call push (Android/GMS)
-
-The current native Android path can show and cancel incoming audio/video-call notifications when Flutter is paused or the process has been reclaimed. It uses Firebase Cloud Messaging data messages and applies only to Android devices with Google Mobile Services. It does not currently include iOS/APNs or the Huawei, Xiaomi, OPPO, vivo, and other vendor channels needed by many mainland-China devices.
-
-Create a Firebase Android app whose package is exactly `com.tooyei.translator`, then inject its client file at:
-
-```text
-apps/mobile/android/app/google-services.json
-```
-
-`google-services.json` is intentionally ignored by Git. It contains client-side Firebase configuration, never the Firebase service-account private key. The Gradle build applies the Google Services plugin only when this file is present. A build without it remains buildable for CI and local UI/RTC testing, but FCM is disabled and Settings reports that system push is not configured; such an APK is not evidence that background calls work.
-
-The API service sends FCM from the server. Configure these values as Railway service variables, not Dart defines, APK resources, repository files, logs, or client-visible admin settings:
-
-```text
-PUSH_PROVIDER=fcm
-ANDROID_PACKAGE_NAME=com.tooyei.translator
-FCM_PROJECT_ID=<firebase-project-id>
-FCM_CLIENT_EMAIL=<firebase-service-account-email>
-FCM_PRIVATE_KEY=<firebase-service-account-private-key>
-```
-
-`FCM_PRIVATE_KEY` may be stored with escaped `\\n` line breaks; the server normalizes them at runtime. `PUSH_PROVIDER=disabled` is the safe local/CI default and deliberately performs no provider delivery. In that mode registration returns `deliveryEnabled: false`; the client must show that server push is disabled and keep native incoming-call presentation off, rather than treating a stored registration as connected. When `PUSH_PROVIDER=fcm`, the API refuses to start unless all three FCM service-account values are present.
-
-After a formal account signs in, the app obtains an installation-scoped FCM registration and creates a random UUID `bindingId` for that account's current local binding generation. It submits both values through `POST /v1/auth/push-registration`. `registered: true` confirms only that the database binding was saved; the app enables native incoming calls and shows “connected” only when the same response also has `deliveryEnabled: true`.
-
-The binding generation is opaque and is not an account identifier or credential. Switching accounts clears the previous local binding and creates a new UUID. The server binds the FCM token and UUID together, includes that UUID in every incoming/cancel data message, and rejects an older authenticated session that tries to reclaim an installation after a newer login. The native receiver ignores every message whose `bindingId` does not exactly match the current local generation. This closes the race where a delayed message for the previous account arrives after account switching. `DELETE /v1/auth/push-registration` must submit the same `provider`, `registrationId`, and `bindingId`, so a delayed cleanup cannot remove a newer binding.
-
-The server also clears the registration and binding on session revocation, password reset, account disable/delete, and logout paths. Guest sessions are not eligible. Incoming/cancel events are short-lived metadata only; media and translated speech continue over the authenticated Socket.IO/RTC call after answer.
-
-Android 13 and later require notification permission. The incoming-call notification channel must remain enabled, and Android 14 and later may also require the user to allow full-screen incoming-call alerts. High-priority FCM improves wake-up latency but does not guarantee exact delivery: network conditions, battery optimization, and manufacturer background policies can still delay or suppress presentation. An Android app that has been explicitly **Force stopped** will not receive FCM until the user opens it again. Test a signed Firebase-enabled build on real GMS devices in foreground, background, process-reclaimed, lock-screen, expiry, cancellation, and multi-device cases; an emulator-only result is insufficient.
-
 ## Bootstrap
 
 ```sh
@@ -86,4 +54,4 @@ iOS source control includes `AppFrameworkInfo.plist`, AppIcon resources, `Genera
 - Host invitation rotation returns a new token/code pair and invalidates the old pair immediately; the app must replace, not append to, the displayed QR/link.
 - A stale `PROCESSING` message is recovered server-side as `FAILED / PROCESSING_TIMEOUT` for retry and audit, but participant transcripts display only `FINAL` translations. The speaker receives the upload failure locally and can retry the retained recording.
 
-Structured, speaker-attributed meeting minutes are implemented from server-owned FINAL message snapshots. Android/GMS background incoming-call push is implemented but still requires Firebase/Railway production configuration and real-device delivery evidence; iOS/APNs and non-GMS vendor push remain later capabilities. Push is not required for an already established real-time translation media path.
+Structured, speaker-attributed meeting minutes are implemented from server-owned FINAL message snapshots. Generative summary quality workflows and push notifications remain later production capabilities and are not required for the real-time translation path.

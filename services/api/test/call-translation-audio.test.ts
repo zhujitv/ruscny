@@ -60,7 +60,7 @@ describe('friend call translated PCM16 audio chunking', () => {
       (chunk) => chunk.length <= MAX_CALL_TRANSLATION_AUDIO_CHUNK_BYTES,
     )).toBe(true);
     expect(decoded.every((chunk) => chunk.length % 2 === 0)).toBe(true);
-    expect(Buffer.compare(Buffer.concat(decoded), pcm)).toBe(0);
+    expect(Buffer.concat(decoded)).toEqual(pcm);
   });
 
   it('rounds an odd requested boundary down without splitting a PCM16 sample', () => {

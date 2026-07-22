@@ -4,7 +4,6 @@ import '../../core/auth/auth_repository.dart';
 import '../../core/cache/app_preferences.dart';
 import '../../core/localization/app_localization.dart';
 import '../../core/models.dart';
-import '../../core/notifications/push_notification_service.dart';
 import '../../core/providers.dart';
 import '../../core/utils/transcript_exporter.dart';
 
@@ -20,7 +19,6 @@ final class AuthController extends AsyncNotifier<AuthSession?> {
       await _saveAccountPreferences(session);
     }
     if (session == null) {
-      await PushNotificationService.clearBinding();
       // An expired/revoked credential must not leave another user's meeting
       // cache available to the next account that signs in on this device.
       try {
@@ -29,8 +27,6 @@ final class AuthController extends AsyncNotifier<AuthSession?> {
         // Authentication still resolves to signed-out if a damaged cache
         // cannot be opened; no cached data is surfaced by the signed-out UI.
       }
-    } else if (session.role == UserRole.guest) {
-      await PushNotificationService.clearBinding();
     }
     return session;
   }
@@ -91,9 +87,6 @@ final class AuthController extends AsyncNotifier<AuthSession?> {
   Future<void> logout() async {
     state = const AsyncLoading();
     try {
-      // Revoke the native display binding before any potentially slow/offline
-      // server logout so a queued push cannot surface after sign-out starts.
-      await PushNotificationService.clearBinding();
       await ref.read(authRepositoryProvider).logout();
     } finally {
       await _clearLocalSession();
@@ -168,7 +161,6 @@ final class AuthController extends AsyncNotifier<AuthSession?> {
   }
 
   Future<void> _clearLocalSession() async {
-    await PushNotificationService.clearBinding();
     ref.read(pendingInviteProvider.notifier).state = null;
     try {
       await ref.read(audioPlaybackProvider).stop();

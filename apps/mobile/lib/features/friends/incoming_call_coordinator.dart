@@ -14,43 +14,6 @@ import 'social_realtime_controller.dart';
 
 const incomingCallRecoveryInterval = Duration(seconds: 2);
 const incomingCallRingingTimeout = Duration(seconds: 60);
-const incomingCallActionRetryInterval = Duration(seconds: 10);
-
-typedef IncomingCallNativeAction = ({String action, String callId});
-
-final class IncomingCallActionAttemptTracker {
-  IncomingCallNativeAction? _lastAction;
-  DateTime? _lastAttemptAt;
-
-  bool shouldAttempt(
-    IncomingCallNativeAction action, {
-    required DateTime now,
-  }) {
-    final lastAttemptAt = _lastAttemptAt;
-    return _lastAction != action ||
-        lastAttemptAt == null ||
-        !now.isBefore(lastAttemptAt.add(incomingCallActionRetryInterval));
-  }
-
-  void begin(IncomingCallNativeAction action, {required DateTime now}) {
-    _lastAction = action;
-    _lastAttemptAt = now;
-  }
-
-  void reset() {
-    _lastAction = null;
-    _lastAttemptAt = null;
-  }
-}
-
-bool isAuthoritativeIncomingCallActionRejection(Object error) =>
-    error is AppException &&
-    const {
-      'FRIEND_CALL_NOT_FOUND',
-      'FRIEND_CALL_STATE_CHANGED',
-      'FRIEND_CALL_MISSED',
-      'FRIEND_CALL_MEDIA_UPGRADE_NOT_ALLOWED',
-    }.contains(error.code);
 
 final class IncomingCallAttemptTracker {
   String? _handledCallId;
@@ -143,8 +106,7 @@ final class _IncomingFriendCallCoordinatorState
   bool _recovering = false;
   bool _inForeground = true;
   String? _notifiedCallId;
-  IncomingCallNativeAction? _pendingNativeAction;
-  final _nativeActionAttempts = IncomingCallActionAttemptTracker();
+  ({String action, String callId})? _pendingNativeAction;
   BuildContext? _incomingDialogContext;
   String? _resolvedOnAnotherDeviceCallId;
   String? _localResponseInFlightCallId;
@@ -179,7 +141,7 @@ final class _IncomingFriendCallCoordinatorState
         if (_scheduledCallId == callId) _scheduledCallId = null;
         if (_notifiedCallId == callId) _notifiedCallId = null;
         unawaited(AudioCueService.stopIncomingRingtone());
-        unawaited(AudioCueService.closeIncomingCallNotification(callId));
+        unawaited(AudioCueService.cancelIncomingCallNotification(callId));
         final dialogContext = _incomingDialogContext;
         if (dialogContext != null && dialogContext.mounted) {
           Navigator.of(dialogContext).pop();
@@ -211,7 +173,6 @@ final class _IncomingFriendCallCoordinatorState
       _scheduledCallId = null;
       _notifiedCallId = null;
       _pendingNativeAction = null;
-      _nativeActionAttempts.reset();
       _resolvedOnAnotherDeviceCallId = null;
       _localResponseInFlightCallId = null;
       _recoverActiveAfterResponseFailure = false;
@@ -285,76 +246,35 @@ final class _IncomingFriendCallCoordinatorState
     }
     _recovering = true;
     try {
-      final nativeAction = await AudioCueService.consumeIncomingCallAction();
-      if (nativeAction != null && nativeAction != _pendingNativeAction) {
-        _pendingNativeAction = nativeAction;
-        _nativeActionAttempts.reset();
-      }
+      _pendingNativeAction ??=
+          await AudioCueService.consumeIncomingCallAction();
       final call = await ref.read(friendRepositoryProvider).activeCall();
       if (!mounted) return;
       _recoverActiveAfterResponseFailure = false;
-      if (call == null) {
-        final pendingAction = _pendingNativeAction;
-        final staleCallIds = <String>{
-          if (pendingAction?.callId case final callId?) callId,
-          if (_notifiedCallId case final callId?) callId,
-        };
-        if (pendingAction != null) {
-          await _ackPendingNativeAction(pendingAction);
-        }
-        _notifiedCallId = null;
-        for (final callId in staleCallIds) {
-          await AudioCueService.closeIncomingCallNotification(callId);
-        }
-        return;
-      }
-      var pendingAction = _pendingNativeAction;
+      final pendingAction = _pendingNativeAction;
       if (pendingAction != null &&
           shouldDiscardPendingIncomingCallAction(
             pendingCallId: pendingAction.callId,
-            activeCallId: call.id,
+            activeCallId: call?.id,
           )) {
-        await _ackPendingNativeAction(pendingAction);
-        pendingAction = _pendingNativeAction;
+        _pendingNativeAction = null;
       }
-      if (pendingAction?.callId == call.id &&
-          !(call.direction == 'INCOMING' && call.isRinging)) {
-        await _ackPendingNativeAction(pendingAction!);
-        pendingAction = _pendingNativeAction;
-      }
-      if (_callAttempts.isHandled(call.id)) return;
-      if (pendingAction?.callId == call.id &&
+      if (call == null || _callAttempts.isHandled(call.id)) return;
+      final currentPendingAction = _pendingNativeAction;
+      if (currentPendingAction?.callId == call.id &&
           call.direction == 'INCOMING' &&
           call.isRinging &&
-          pendingAction?.action != 'show') {
-        final action = pendingAction!;
-        if (!_nativeActionAttempts.shouldAttempt(
-          action,
-          now: DateTime.now(),
-        )) {
-          return;
-        }
-        _nativeActionAttempts.begin(action, now: DateTime.now());
-        await AudioCueService.dismissIncomingCallNotification(call.id);
+          currentPendingAction?.action != 'show') {
+        await AudioCueService.cancelIncomingCallNotification(call.id);
         _notifiedCallId = null;
-        final accepted = action.action == 'answer';
+        final accepted = currentPendingAction?.action == 'answer';
+        _pendingNativeAction = null;
         if (accepted) _recoverActiveAfterResponseFailure = true;
-        late final FriendCallModel updated;
-        try {
-          updated = await ref.read(friendRepositoryProvider).respondToCall(
-                call.id,
-                accept: accepted,
-                mediaType: accepted ? call.mediaType : null,
-              );
-        } catch (error) {
-          if (!isAuthoritativeIncomingCallActionRejection(error)) rethrow;
-          await _ackPendingNativeAction(action);
-          await AudioCueService.closeIncomingCallNotification(call.id);
-          _recoverActiveAfterResponseFailure = accepted;
-          return;
-        }
-        await _ackPendingNativeAction(action);
-        await AudioCueService.closeIncomingCallNotification(call.id);
+        final updated = await ref.read(friendRepositoryProvider).respondToCall(
+              call.id,
+              accept: accepted,
+              mediaType: accepted ? call.mediaType : null,
+            );
         _recoverActiveAfterResponseFailure = false;
         _callAttempts.begin(call.id);
         if (accepted && mounted) {
@@ -366,8 +286,11 @@ final class _IncomingFriendCallCoordinatorState
         }
         return;
       }
-      if (!mounted) return;
       if (call.direction == 'INCOMING' && call.isRinging) {
+        if (currentPendingAction?.callId == call.id &&
+            currentPendingAction?.action == 'show') {
+          _pendingNativeAction = null;
+        }
         _scheduleIncomingCall(call);
       } else if (includeActive &&
           call.isActive &&
@@ -386,20 +309,6 @@ final class _IncomingFriendCallCoordinatorState
     }
   }
 
-  Future<bool> _ackPendingNativeAction(
-    IncomingCallNativeAction action,
-  ) async {
-    if (_pendingNativeAction != action) return false;
-    final acknowledged = await AudioCueService.ackIncomingCallAction(
-      callId: action.callId,
-      action: action.action,
-    );
-    if (!acknowledged || _pendingNativeAction != action) return false;
-    _pendingNativeAction = null;
-    _nativeActionAttempts.reset();
-    return true;
-  }
-
   Future<void> _presentIncomingCall(FriendCallModel call) async {
     if (_dialogOpen || _callAttempts.isHandled(call.id) || !mounted) return;
     if (_resolvedOnAnotherDeviceCallId == call.id) {
@@ -414,7 +323,7 @@ final class _IncomingFriendCallCoordinatorState
     Timer? promptTimeout;
     ref.read(socialRealtimeProvider.notifier).consumeCall(call.id);
     try {
-      await AudioCueService.dismissIncomingCallNotification(call.id);
+      await AudioCueService.cancelIncomingCallNotification(call.id);
       _notifiedCallId = null;
       if (_resolvedOnAnotherDeviceCallId == call.id) {
         responseCompleted = true;
@@ -424,14 +333,7 @@ final class _IncomingFriendCallCoordinatorState
         createdAt: call.createdAt,
         now: DateTime.now(),
       );
-      if (promptRemaining == Duration.zero) {
-        final pendingAction = _pendingNativeAction;
-        if (pendingAction?.callId == call.id &&
-            pendingAction?.action == 'show') {
-          await _ackPendingNativeAction(pendingAction!);
-        }
-        return;
-      }
+      if (promptRemaining == Duration.zero) return;
       await AudioCueService.startIncomingRingtone();
       if (!mounted) return;
       if (_resolvedOnAnotherDeviceCallId == call.id) {
@@ -487,10 +389,6 @@ final class _IncomingFriendCallCoordinatorState
           );
         },
       );
-      final pendingAction = _pendingNativeAction;
-      if (pendingAction?.callId == call.id && pendingAction?.action == 'show') {
-        await _ackPendingNativeAction(pendingAction!);
-      }
       promptTimeout = Timer(promptRemaining, () {
         promptExpired = true;
         unawaited(AudioCueService.stopIncomingRingtone());
@@ -518,7 +416,6 @@ final class _IncomingFriendCallCoordinatorState
             accept: answerMediaType != null,
             mediaType: answerMediaType,
           );
-      await AudioCueService.closeIncomingCallNotification(call.id);
       _recoverActiveAfterResponseFailure = false;
       responseCompleted = true;
       if (answerMediaType != null && mounted) {

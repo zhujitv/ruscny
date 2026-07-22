@@ -21,10 +21,6 @@ import {
   friendCallHeartbeatExpiredWhere,
   friendCallHeartbeatFreshWhere,
 } from '../services/friend-call-liveness.js';
-import {
-  enqueueFriendCallPushJob,
-  wakeFriendCallPushWorker,
-} from '../services/friend-call-push-outbox.js';
 import { subjectCredentialRateLimit } from './social.js';
 
 const activeStatuses: FriendCallStatus[] = ['RINGING', 'ACTIVE'];
@@ -125,24 +121,8 @@ export async function registerFriendCallRoutes(app: FastifyInstance): Promise<vo
         },
         include: { caller: { select: profileSelect }, callee: { select: profileSelect } },
       });
-      await Promise.all([
-        enqueueFriendCallPushJob(tx, {
-          callId: call.id,
-          recipientUserId: call.calleeId,
-          kind: 'INCOMING',
-          expiresAt: new Date(call.createdAt.getTime() + ringingTimeoutMs),
-        }),
-        ...[...missedCalls, ...endedCalls].map((closed) =>
-          enqueueFriendCallPushJob(tx, {
-            callId: closed.id,
-            recipientUserId: closed.calleeId,
-            kind: 'CANCEL',
-            expiresAt: new Date(Date.now() + ringingTimeoutMs),
-          })),
-      ]);
       return { call, missedCalls, endedCalls };
     });
-    wakeFriendCallPushWorker();
     for (const expired of created.missedCalls) notifyCallClosed(expired, 'MISSED');
     for (const expired of created.endedCalls) notifyCallClosed(expired, 'ENDED');
     const { call } = created;
@@ -203,29 +183,17 @@ export async function registerFriendCallRoutes(app: FastifyInstance): Promise<vo
     const now = new Date();
     const ringingCutoff = new Date(now.getTime() - ringingTimeoutMs);
     if (call.createdAt <= ringingCutoff) {
-      const missed = await prisma.$transaction(async (tx) => {
-        const [transitioned] = await tx.friendCall.updateManyAndReturn({
-          where: {
-            id,
-            calleeId: request.auth.subjectId,
-            status: 'RINGING',
-            createdAt: { lte: ringingCutoff },
-          },
-          data: { status: 'MISSED', endedAt: now },
-          select: callClosureSelect,
-        });
-        if (transitioned) {
-          await enqueueFriendCallPushJob(tx, {
-            callId: transitioned.id,
-            recipientUserId: transitioned.calleeId,
-            kind: 'CANCEL',
-            expiresAt: new Date(now.getTime() + ringingTimeoutMs),
-          });
-        }
-        return transitioned;
+      const [missed] = await prisma.friendCall.updateManyAndReturn({
+        where: {
+          id,
+          calleeId: request.auth.subjectId,
+          status: 'RINGING',
+          createdAt: { lte: ringingCutoff },
+        },
+        data: { status: 'MISSED', endedAt: now },
+        select: callClosureSelect,
       });
       if (missed) {
-        wakeFriendCallPushWorker();
         notifyCallClosed(missed, 'MISSED');
         throw conflict('FRIEND_CALL_MISSED', '来电已超时');
       }
@@ -241,38 +209,26 @@ export async function registerFriendCallRoutes(app: FastifyInstance): Promise<vo
     const acceptedMediaType: FriendCallMediaType = action === 'ACCEPT'
       ? mediaType ?? 'AUDIO'
       : call.mediaType;
-    const changed = await prisma.$transaction(async (tx) => {
-      const transitioned = await tx.friendCall.updateMany({
-        where: {
-          id,
-          calleeId: request.auth.subjectId,
-          status: 'RINGING',
-          createdAt: { gt: ringingCutoff },
-        },
-        data: {
-          status: nextStatus,
-          ...(action === 'ACCEPT'
-            ? {
-                acceptedAt: now,
-                lastHeartbeatAt: now,
-                calleeDeviceId: request.auth.deviceId,
-                mediaType: acceptedMediaType,
-              }
-            : { endedAt: now, endedById: request.auth.subjectId }),
-        },
-      });
-      if (transitioned.count === 1) {
-        await enqueueFriendCallPushJob(tx, {
-          callId: call.id,
-          recipientUserId: call.calleeId,
-          kind: 'CANCEL',
-          expiresAt: new Date(now.getTime() + ringingTimeoutMs),
-        });
-      }
-      return transitioned;
+    const changed = await prisma.friendCall.updateMany({
+      where: {
+        id,
+        calleeId: request.auth.subjectId,
+        status: 'RINGING',
+        createdAt: { gt: ringingCutoff },
+      },
+      data: {
+        status: nextStatus,
+        ...(action === 'ACCEPT'
+          ? {
+              acceptedAt: now,
+              lastHeartbeatAt: now,
+              calleeDeviceId: request.auth.deviceId,
+              mediaType: acceptedMediaType,
+            }
+          : { endedAt: now, endedById: request.auth.subjectId }),
+      },
     });
     if (changed.count !== 1) throw conflict('FRIEND_CALL_STATE_CHANGED', '通话状态已经变化');
-    wakeFriendCallPushWorker();
     const updated = {
       ...call,
       status: nextStatus,
@@ -305,50 +261,39 @@ export async function registerFriendCallRoutes(app: FastifyInstance): Promise<vo
     });
     if (!call) throw notFound('FRIEND_CALL_NOT_FOUND', '通话不存在');
     const now = new Date();
-    const transition = await prisma.$transaction(async (tx) => {
-      const [cancelled] = await tx.friendCall.updateManyAndReturn({
-        where: {
-          id,
-          status: 'RINGING',
+    const [cancelled] = await prisma.friendCall.updateManyAndReturn({
+      where: {
+        id,
+        status: 'RINGING',
           OR: [
             { callerId: request.auth.subjectId, callerDeviceId: request.auth.deviceId },
             { calleeId: request.auth.subjectId },
           ],
+      },
+      data: { status: 'CANCELLED', endedAt: now, endedById: request.auth.subjectId },
+      select: callClosureSelect,
+    });
+    let nextStatus: FriendCallStatus = 'CANCELLED';
+    let closedCall: FriendCallClosure;
+    if (cancelled) {
+      closedCall = cancelled;
+    } else {
+      const [ended] = await prisma.friendCall.updateManyAndReturn({
+        where: {
+          id,
+          status: 'ACTIVE',
+          OR: [
+            { callerId: request.auth.subjectId, callerDeviceId: request.auth.deviceId },
+            { calleeId: request.auth.subjectId, calleeDeviceId: request.auth.deviceId },
+          ],
         },
-        data: { status: 'CANCELLED', endedAt: now, endedById: request.auth.subjectId },
+        data: { status: 'ENDED', endedAt: now, endedById: request.auth.subjectId },
         select: callClosureSelect,
       });
-      let nextStatus: FriendCallStatus = 'CANCELLED';
-      let closedCall: FriendCallClosure;
-      if (cancelled) {
-        closedCall = cancelled;
-      } else {
-        const [ended] = await tx.friendCall.updateManyAndReturn({
-          where: {
-            id,
-            status: 'ACTIVE',
-            OR: [
-              { callerId: request.auth.subjectId, callerDeviceId: request.auth.deviceId },
-              { calleeId: request.auth.subjectId, calleeDeviceId: request.auth.deviceId },
-            ],
-          },
-          data: { status: 'ENDED', endedAt: now, endedById: request.auth.subjectId },
-          select: callClosureSelect,
-        });
-        if (!ended) throw conflict('FRIEND_CALL_STATE_CHANGED', '通话已经结束');
-        nextStatus = 'ENDED';
-        closedCall = ended;
-      }
-      await enqueueFriendCallPushJob(tx, {
-        callId: closedCall.id,
-        recipientUserId: closedCall.calleeId,
-        kind: 'CANCEL',
-        expiresAt: new Date(now.getTime() + ringingTimeoutMs),
-      });
-      return { nextStatus, closedCall };
-    });
-    wakeFriendCallPushWorker();
-    const { nextStatus, closedCall } = transition;
+      if (!ended) throw conflict('FRIEND_CALL_STATE_CHANGED', '通话已经结束');
+      nextStatus = 'ENDED';
+      closedCall = ended;
+    }
     notifyCallClosed(closedCall, nextStatus);
     return {
       ok: true,
@@ -592,43 +537,23 @@ async function expireStaleCallsForSubject(subjectId: string): Promise<void> {
       data: { status: 'ENDED', endedAt: now },
       select: callClosureSelect,
     });
-    await Promise.all([...missedCalls, ...endedCalls].map((call) =>
-      enqueueFriendCallPushJob(tx, {
-        callId: call.id,
-        recipientUserId: call.calleeId,
-        kind: 'CANCEL',
-        expiresAt: new Date(now.getTime() + ringingTimeoutMs),
-      })));
     return { missedCalls, endedCalls };
   });
-  if (expired.missedCalls.length || expired.endedCalls.length) wakeFriendCallPushWorker();
   for (const call of expired.missedCalls) notifyCallClosed(call, 'MISSED');
   for (const call of expired.endedCalls) notifyCallClosed(call, 'ENDED');
 }
 
 async function expireActiveCallAndNotify(id: string, now: Date): Promise<boolean> {
-  const expired = await prisma.$transaction(async (tx) => {
-    const [transitioned] = await tx.friendCall.updateManyAndReturn({
-      where: {
-        id,
-        status: 'ACTIVE',
-        AND: friendCallHeartbeatExpiredWhere(now),
-      },
-      data: { status: 'ENDED', endedAt: now },
-      select: callClosureSelect,
-    });
-    if (transitioned) {
-      await enqueueFriendCallPushJob(tx, {
-        callId: transitioned.id,
-        recipientUserId: transitioned.calleeId,
-        kind: 'CANCEL',
-        expiresAt: new Date(now.getTime() + ringingTimeoutMs),
-      });
-    }
-    return transitioned;
+  const [expired] = await prisma.friendCall.updateManyAndReturn({
+    where: {
+      id,
+      status: 'ACTIVE',
+      AND: friendCallHeartbeatExpiredWhere(now),
+    },
+    data: { status: 'ENDED', endedAt: now },
+    select: callClosureSelect,
   });
   if (!expired) return false;
-  wakeFriendCallPushWorker();
   notifyCallClosed(expired, 'ENDED');
   return true;
 }

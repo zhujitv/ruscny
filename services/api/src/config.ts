@@ -88,17 +88,6 @@ const schema = z.object({
   EMAIL_REQUEST_TIMEOUT_MS: z.coerce.number().int().min(1_000).max(60_000).default(15_000),
   EMAIL_VERIFICATION_TTL_MINUTES: z.coerce.number().int().min(10).max(10_080).default(1_440),
   PASSWORD_RESET_TTL_MINUTES: z.coerce.number().int().min(10).max(1_440).default(30),
-  PUSH_PROVIDER: z.enum(['disabled', 'fcm']).default('disabled'),
-  ANDROID_PACKAGE_NAME: z
-    .string()
-    .trim()
-    .min(3)
-    .max(255)
-    .regex(/^[A-Za-z][A-Za-z0-9_]*(?:\.[A-Za-z][A-Za-z0-9_]*)+$/)
-    .default('com.tooyei.translator'),
-  FCM_PROJECT_ID: optionalString,
-  FCM_CLIENT_EMAIL: optionalEmail,
-  FCM_PRIVATE_KEY: optionalSecret,
   PUBLIC_APP_URL: z.string().url().default('https://www.ruscny.net'),
   PUBLIC_API_URL: z.string().url().default('http://localhost:3000'),
   INVITE_TTL_MINUTES: z.coerce.number().int().positive().default(1_440),
@@ -130,12 +119,6 @@ export type AppConfig = z.infer<typeof schema>;
 
 export function loadConfig(environment: NodeJS.ProcessEnv = process.env): AppConfig {
   const parsed = schema.parse(environment);
-  if (
-    parsed.PUSH_PROVIDER === 'fcm' &&
-    (!parsed.FCM_PROJECT_ID || !parsed.FCM_CLIENT_EMAIL || !parsed.FCM_PRIVATE_KEY)
-  ) {
-    throw new Error('FCM_PROJECT_ID, FCM_CLIENT_EMAIL and FCM_PRIVATE_KEY are required for PUSH_PROVIDER=fcm');
-  }
   if (parsed.NODE_ENV === 'production') {
     const unsafe = [
       parsed.JWT_ACCESS_SECRET,

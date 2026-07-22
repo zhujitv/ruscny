@@ -5,8 +5,6 @@ import { ZodError } from 'zod';
 const mocks = vi.hoisted(() => {
   const state = { role: 'USER' as 'USER' | 'GUEST' };
   const transaction = {
-    $executeRaw: vi.fn(),
-    $queryRaw: vi.fn(),
     user: { updateMany: vi.fn() },
     userDevice: { findMany: vi.fn(), updateMany: vi.fn() },
     userPasswordResetToken: { updateMany: vi.fn() },
@@ -63,7 +61,6 @@ vi.mock('../src/services/audio-assets.js', () => ({
 }));
 
 import { AppError } from '../src/errors.js';
-import { config } from '../src/config.js';
 import { registerAuthRoutes } from '../src/routes/auth.js';
 
 let app: FastifyInstance | undefined;
@@ -82,17 +79,6 @@ beforeEach(() => {
   mocks.verifyPassword.mockResolvedValue({ valid: true, needsUpgrade: false });
   mocks.hashPassword.mockResolvedValue('v2:new-password-hash');
   mocks.transaction.user.updateMany.mockResolvedValue({ count: 1 });
-  mocks.transaction.$queryRaw.mockResolvedValue([{
-    id: 'device-row-current',
-    userId: 'user-a',
-    deviceId: 'device-current',
-    sessionId: 'session-current',
-    authenticatedAt: new Date('2026-07-22T10:00:00.000Z'),
-    revokedAt: null,
-    pushToken: null,
-    pushBindingId: null,
-  }]);
-  mocks.transaction.$executeRaw.mockResolvedValue(1);
   mocks.transaction.userDevice.findMany.mockResolvedValue([
     { deviceId: 'device-b' },
     { deviceId: 'device-c' },
@@ -157,9 +143,6 @@ describe('personal account management', () => {
           revokedAt: expect.any(Date),
           refreshTokenHash: null,
           refreshTokenJti: null,
-          pushToken: null,
-          pushBindingId: null,
-          pushTokenUpdatedAt: null,
         }),
       }),
     );
@@ -287,176 +270,8 @@ describe('personal account management', () => {
         revokedAt: expect.any(Date),
         refreshTokenHash: null,
         refreshTokenJti: null,
-        pushToken: null,
-        pushBindingId: null,
-        pushTokenUpdatedAt: null,
       },
     });
     expect(mocks.disconnectDevice).toHaveBeenCalledWith('user-a', 'device-phone');
-  });
-
-  it('binds an FCM registration only to the authenticated device session', async () => {
-    const token = 'fcm-registration-token-current-device';
-    const bindingId = '06927bcd-9b16-4480-a031-33fbb4a84732';
-    mocks.transaction.userDevice.updateMany
-      .mockResolvedValueOnce({ count: 1 })
-      .mockResolvedValueOnce({ count: 1 });
-    app = await createApp();
-
-    const response = await app.inject({
-      method: 'POST',
-      url: '/v1/auth/push-registration',
-      payload: { provider: 'FCM', registrationId: token, bindingId },
-    });
-
-    expect(response.statusCode, response.body).toBe(200);
-    expect(response.json()).toEqual({
-      ok: true,
-      data: {
-        registered: true,
-        deliveryEnabled: config.PUSH_PROVIDER === 'fcm',
-      },
-    });
-    expect(mocks.transaction.$executeRaw).toHaveBeenCalledTimes(2);
-    expect(mocks.transaction.userDevice.updateMany).toHaveBeenNthCalledWith(1, {
-      where: {
-        id: { not: 'device-row-current' },
-        OR: [
-          { pushToken: token },
-          { pushBindingId: bindingId },
-        ],
-      },
-      data: {
-        pushToken: null,
-        pushBindingId: null,
-        pushTokenUpdatedAt: null,
-      },
-    });
-    expect(mocks.transaction.userDevice.updateMany).toHaveBeenNthCalledWith(2, {
-      where: {
-        id: 'device-row-current',
-        sessionId: 'session-current',
-        revokedAt: null,
-      },
-      data: {
-        platform: 'ANDROID',
-        pushToken: token,
-        pushBindingId: bindingId,
-        pushTokenUpdatedAt: expect.any(Date),
-        lastSeenAt: expect.any(Date),
-      },
-    });
-  });
-
-  it('compare-and-clears only the previous FCM registration', async () => {
-    const token = 'fcm-registration-token-to-remove';
-    const bindingId = '06927bcd-9b16-4480-a031-33fbb4a84732';
-    app = await createApp();
-
-    const response = await app.inject({
-      method: 'DELETE',
-      url: '/v1/auth/push-registration',
-      payload: { provider: 'FCM', registrationId: token, bindingId },
-    });
-
-    expect(response.statusCode, response.body).toBe(200);
-    expect(mocks.prisma.userDevice.updateMany).toHaveBeenCalledWith({
-      where: {
-        userId: 'user-a',
-        deviceId: 'device-current',
-        sessionId: 'session-current',
-        revokedAt: null,
-        pushToken: token,
-        pushBindingId: bindingId,
-      },
-      data: {
-        pushToken: null,
-        pushBindingId: null,
-        pushTokenUpdatedAt: null,
-      },
-    });
-    expect(response.json().data).toEqual({
-      registered: false,
-      deliveryEnabled: config.PUSH_PROVIDER === 'fcm',
-    });
-  });
-
-  it('rejects a delayed registration when a newer owner already has the token', async () => {
-    const token = 'fcm-registration-token-current-device';
-    const bindingId = '06927bcd-9b16-4480-a031-33fbb4a84732';
-    mocks.transaction.$queryRaw
-      .mockResolvedValueOnce([
-        {
-          id: 'device-row-current',
-          userId: 'user-a',
-          deviceId: 'device-current',
-          sessionId: 'session-current',
-          authenticatedAt: new Date('2026-07-22T10:00:00.000Z'),
-          revokedAt: null,
-          pushToken: null,
-          pushBindingId: null,
-        },
-        {
-          id: 'device-row-newer',
-          userId: 'user-b',
-          deviceId: 'other-device-id',
-          sessionId: 'session-newer',
-          authenticatedAt: new Date('2026-07-22T10:00:01.000Z'),
-          revokedAt: null,
-          pushToken: token,
-          pushBindingId: '3b9dd571-6d6a-493f-8988-0ac4caf75b82',
-        },
-      ]);
-    app = await createApp();
-
-    const response = await app.inject({
-      method: 'POST',
-      url: '/v1/auth/push-registration',
-      payload: { provider: 'FCM', registrationId: token, bindingId },
-    });
-
-    expect(response.statusCode).toBe(401);
-    expect(response.json().code).toBe('PUSH_SESSION_STALE');
-    expect(mocks.transaction.userDevice.updateMany).not.toHaveBeenCalled();
-  });
-
-  it('rejects an ambiguous registration when another owner authenticated in the same millisecond', async () => {
-    const token = 'fcm-registration-token-current-device';
-    const bindingId = '06927bcd-9b16-4480-a031-33fbb4a84732';
-    const authenticatedAt = new Date('2026-07-22T10:00:00.000Z');
-    mocks.transaction.$queryRaw
-      .mockResolvedValueOnce([
-        {
-          id: 'device-row-current',
-          userId: 'user-a',
-          deviceId: 'device-current',
-          sessionId: 'session-current',
-          authenticatedAt,
-          revokedAt: null,
-          pushToken: null,
-          pushBindingId: null,
-        },
-        {
-          id: 'device-row-other',
-          userId: 'user-b',
-          deviceId: 'other-device-id',
-          sessionId: 'session-other',
-          authenticatedAt,
-          revokedAt: null,
-          pushToken: token,
-          pushBindingId: '3b9dd571-6d6a-493f-8988-0ac4caf75b82',
-        },
-      ]);
-    app = await createApp();
-
-    const response = await app.inject({
-      method: 'POST',
-      url: '/v1/auth/push-registration',
-      payload: { provider: 'FCM', registrationId: token, bindingId },
-    });
-
-    expect(response.statusCode).toBe(401);
-    expect(response.json().code).toBe('PUSH_SESSION_STALE');
-    expect(mocks.transaction.userDevice.updateMany).not.toHaveBeenCalled();
   });
 });

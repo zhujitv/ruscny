@@ -18,7 +18,6 @@ const mocks = vi.hoisted(() => {
     guestIdentity: { updateMany: vi.fn() },
     participant: { updateMany: vi.fn() },
     meetingInvitation: { updateMany: vi.fn() },
-    friendCall: { updateManyAndReturn: vi.fn() },
   };
   return {
     transaction,
@@ -33,10 +32,6 @@ const mocks = vi.hoisted(() => {
     },
     disconnectSubject: vi.fn(),
     emitToConversation: vi.fn(),
-    emitToSubject: vi.fn(),
-    stopFriendCallTranslation: vi.fn(),
-    enqueueFriendCallPushJob: vi.fn(),
-    wakeFriendCallPushWorker: vi.fn(),
   };
 });
 
@@ -62,13 +57,7 @@ vi.mock('../src/realtime-hub.js', () => ({
   realtimeHub: () => ({
     disconnectSubject: mocks.disconnectSubject,
     emitToConversation: mocks.emitToConversation,
-    emitToSubject: mocks.emitToSubject,
-    stopFriendCallTranslation: mocks.stopFriendCallTranslation,
   }),
-}));
-vi.mock('../src/services/friend-call-push-outbox.js', () => ({
-  enqueueFriendCallPushJob: mocks.enqueueFriendCallPushJob,
-  wakeFriendCallPushWorker: mocks.wakeFriendCallPushWorker,
 }));
 
 import { registerAdminRoutes } from '../src/routes/admin.js';
@@ -90,8 +79,6 @@ beforeEach(async () => {
   mocks.transaction.guestIdentity.updateMany.mockResolvedValue({ count: 0 });
   mocks.transaction.participant.updateMany.mockResolvedValue({ count: 2 });
   mocks.transaction.meetingInvitation.updateMany.mockResolvedValue({ count: 0 });
-  mocks.transaction.friendCall.updateManyAndReturn.mockResolvedValue([]);
-  mocks.enqueueFriendCallPushJob.mockResolvedValue(true);
   app = Fastify({ logger: false });
   await registerAdminRoutes(app);
 });
@@ -138,14 +125,6 @@ describe('server administrator writes', () => {
     mocks.transaction.user.findUniqueOrThrow.mockResolvedValue({
       id: 'user-a', status: 'DISABLED', isSystemAdmin: false, email: 'user@example.com',
     });
-    mocks.transaction.friendCall.updateManyAndReturn.mockResolvedValue([
-      {
-        id: 'call-a', callerId: 'user-a', calleeId: 'friend-a', mediaType: 'AUDIO',
-      },
-      {
-        id: 'call-b', callerId: 'friend-b', calleeId: 'user-a', mediaType: 'VIDEO',
-      },
-    ]);
 
     const response = await app!.inject({
       method: 'PATCH',
@@ -156,14 +135,7 @@ describe('server administrator writes', () => {
     expect(response.statusCode).toBe(200);
     expect(mocks.transaction.userDevice.updateMany).toHaveBeenCalledWith({
       where: { userId: 'user-a', revokedAt: null },
-      data: {
-        revokedAt: expect.any(Date),
-        refreshTokenHash: null,
-        refreshTokenJti: null,
-        pushToken: null,
-        pushBindingId: null,
-        pushTokenUpdatedAt: null,
-      },
+      data: { revokedAt: expect.any(Date), refreshTokenHash: null, refreshTokenJti: null },
     });
     expect(mocks.transaction.adminAuditLog.create).toHaveBeenCalledWith({
       data: expect.objectContaining({
@@ -171,41 +143,6 @@ describe('server administrator writes', () => {
         metadata: expect.objectContaining({ reason: 'security review' }),
       }),
     });
-    expect(mocks.transaction.friendCall.updateManyAndReturn).toHaveBeenCalledWith({
-      where: {
-        status: { in: ['RINGING', 'ACTIVE'] },
-        OR: [{ callerId: 'user-a' }, { calleeId: 'user-a' }],
-      },
-      data: { status: 'ENDED', endedAt: expect.any(Date), endedById: null },
-      select: {
-        id: true,
-        callerId: true,
-        calleeId: true,
-        mediaType: true,
-      },
-    });
-    expect(mocks.enqueueFriendCallPushJob).toHaveBeenNthCalledWith(
-      1,
-      mocks.transaction,
-      expect.objectContaining({
-        callId: 'call-a', recipientUserId: 'friend-a', kind: 'CANCEL',
-        snapshotRecipientTargets: false,
-      }),
-    );
-    expect(mocks.enqueueFriendCallPushJob).toHaveBeenNthCalledWith(
-      2,
-      mocks.transaction,
-      expect.objectContaining({
-        callId: 'call-b', recipientUserId: 'user-a', kind: 'CANCEL',
-        snapshotRecipientTargets: true,
-      }),
-    );
-    expect(mocks.enqueueFriendCallPushJob.mock.invocationCallOrder[1]).toBeLessThan(
-      mocks.transaction.userDevice.updateMany.mock.invocationCallOrder[0]!,
-    );
-    expect(mocks.wakeFriendCallPushWorker).toHaveBeenCalledOnce();
-    expect(mocks.stopFriendCallTranslation).toHaveBeenCalledWith('call-a');
-    expect(mocks.stopFriendCallTranslation).toHaveBeenCalledWith('call-b');
     expect(mocks.disconnectSubject).toHaveBeenCalledWith('user-a');
   });
 
@@ -233,14 +170,7 @@ describe('server administrator writes', () => {
     });
     expect(mocks.transaction.userDevice.updateMany).toHaveBeenCalledWith({
       where: { userId: 'user-a', revokedAt: null },
-      data: {
-        revokedAt: expect.any(Date),
-        refreshTokenHash: null,
-        refreshTokenJti: null,
-        pushToken: null,
-        pushBindingId: null,
-        pushTokenUpdatedAt: null,
-      },
+      data: { revokedAt: expect.any(Date), refreshTokenHash: null, refreshTokenJti: null },
     });
     expect(mocks.transaction.$queryRaw).toHaveBeenCalledOnce();
     expect(mocks.transaction.$queryRaw.mock.invocationCallOrder[0]).toBeLessThan(

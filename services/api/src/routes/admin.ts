@@ -13,10 +13,6 @@ import { messageDto } from '../services/conversations.js';
 import { retryFailedMessage } from '../services/admin-message-retry.js';
 import { wakeAudioDeletionWorker } from '../services/audio-deletion-outbox.js';
 import { wakeSummaryEmailWorker } from './summary-email.js';
-import {
-  enqueueFriendCallPushJob,
-  wakeFriendCallPushWorker,
-} from '../services/friend-call-push-outbox.js';
 
 const pageQuerySchema = z.object({
   page: z.coerce.number().int().min(1).default(1),
@@ -24,7 +20,6 @@ const pageQuerySchema = z.object({
 });
 const reasonSchema = z.string().trim().max(500).optional();
 const PASSWORD_RESET_CONTEXT = 'admin-password-reset-v1:';
-const FRIEND_CALL_CANCEL_PUSH_TTL_MS = 60_000;
 
 export function adminPasswordResetTokenHash(token: string): string {
   return secretHash(`${PASSWORD_RESET_CONTEXT}${token}`, config.PASSWORD_PEPPER);
@@ -132,14 +127,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
         }
         await tx.userDevice.updateMany({
           where: { userId: credential.userId, revokedAt: null },
-          data: {
-            revokedAt: now,
-            refreshTokenHash: null,
-            refreshTokenJti: null,
-            pushToken: null,
-            pushBindingId: null,
-            pushTokenUpdatedAt: null,
-          },
+          data: { revokedAt: now, refreshTokenHash: null, refreshTokenJti: null },
         });
         await tx.adminPasswordResetToken.updateMany({
           where: { userId: credential.userId, usedAt: null },
@@ -431,48 +419,16 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     }
     if (target.status === body.status) return { ok: true, data: target };
     const now = new Date();
-    const updateResult = await prisma.$transaction(async (tx) => {
+    const updated = await prisma.$transaction(async (tx) => {
       const changed = await tx.user.updateMany({
         where: { id, status: target.status },
         data: { status: body.status },
       });
       if (changed.count !== 1) throw conflict('USER_STATUS_CHANGED', '用户状态已变更，请刷新后重试');
-      const endedCalls = body.status === 'DISABLED'
-        ? await tx.friendCall.updateManyAndReturn({
-            where: {
-              status: { in: ['RINGING', 'ACTIVE'] },
-              OR: [{ callerId: id }, { calleeId: id }],
-            },
-            data: { status: 'ENDED', endedAt: now, endedById: null },
-            select: {
-              id: true,
-              callerId: true,
-              calleeId: true,
-              mediaType: true,
-            },
-          })
-        : [];
-      await Promise.all(endedCalls.map((call) =>
-        enqueueFriendCallPushJob(tx, {
-          callId: call.id,
-          recipientUserId: call.calleeId,
-          kind: 'CANCEL',
-          expiresAt: new Date(now.getTime() + FRIEND_CALL_CANCEL_PUSH_TTL_MS),
-          // Snapshot only when the disabled account is the callee whose
-          // credentials must be erased before this transaction commits.
-          snapshotRecipientTargets: call.calleeId === id,
-        })));
       if (body.status === 'DISABLED') {
         await tx.userDevice.updateMany({
           where: { userId: id, revokedAt: null },
-          data: {
-            revokedAt: now,
-            refreshTokenHash: null,
-            refreshTokenJti: null,
-            pushToken: null,
-            pushBindingId: null,
-            pushTokenUpdatedAt: null,
-          },
+          data: { revokedAt: now, refreshTokenHash: null, refreshTokenJti: null },
         });
       }
       await auditCreate(tx, request, `USER_${body.status}`, 'USER', id, {
@@ -480,27 +436,13 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
         nextStatus: body.status,
         ...(body.reason ? { reason: body.reason } : {}),
       });
-      const user = await tx.user.findUniqueOrThrow({
+      return tx.user.findUniqueOrThrow({
         where: { id },
         select: { id: true, status: true, isSystemAdmin: true, email: true },
       });
-      return { user, endedCalls };
     });
-    if (updateResult.endedCalls.length) wakeFriendCallPushWorker();
-    for (const call of updateResult.endedCalls) {
-      realtimeHub().stopFriendCallTranslation(call.id);
-      const payload = {
-        callId: call.id,
-        status: 'ENDED',
-        mediaType: call.mediaType,
-      };
-      realtimeHub().emitToSubject(call.callerId, 'friend.call.ended', payload);
-      if (call.calleeId !== call.callerId) {
-        realtimeHub().emitToSubject(call.calleeId, 'friend.call.ended', payload);
-      }
-    }
     if (body.status === 'DISABLED') realtimeHub().disconnectSubject(id);
-    return { ok: true, data: updateResult.user };
+    return { ok: true, data: updated };
   });
 
   app.post('/v1/admin/users/:id/revoke-sessions', { preHandler: adminPreHandler }, async (request) => {
@@ -513,14 +455,7 @@ export async function registerAdminRoutes(app: FastifyInstance): Promise<void> {
     const revokedCount = await prisma.$transaction(async (tx) => {
       const revoked = await tx.userDevice.updateMany({
         where: { userId: id, revokedAt: null },
-        data: {
-          revokedAt: now,
-          refreshTokenHash: null,
-          refreshTokenJti: null,
-          pushToken: null,
-          pushBindingId: null,
-          pushTokenUpdatedAt: null,
-        },
+        data: { revokedAt: now, refreshTokenHash: null, refreshTokenJti: null },
       });
       await auditCreate(tx, request, 'USER_SESSIONS_REVOKED', 'USER', id, {
         revokedDeviceCount: revoked.count,

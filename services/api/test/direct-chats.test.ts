@@ -10,7 +10,6 @@ const mocks = vi.hoisted(() => {
     friendship: { deleteMany: vi.fn() },
     friendRequest: { deleteMany: vi.fn() },
     friendCall: { updateManyAndReturn: vi.fn() },
-    friendCallPushJob: { createMany: vi.fn() },
   };
   return {
     transaction,
@@ -81,7 +80,6 @@ beforeEach(async () => {
     { id: 'user-b', status: 'ACTIVE' },
   ]);
   mocks.transaction.friendCall.updateManyAndReturn.mockResolvedValue([]);
-  mocks.transaction.friendCallPushJob.createMany.mockResolvedValue({ count: 1 });
   app = Fastify({ logger: false });
   app.setErrorHandler(async (error, _request, reply) => {
     if (error instanceof AppError) {
@@ -144,14 +142,6 @@ describe('friend direct chats', () => {
       'friend.call.ended',
       { callId: 'call-a-b', status: 'ENDED', mediaType: 'VIDEO' },
     );
-    expect(mocks.transaction.friendCallPushJob.createMany).toHaveBeenCalledWith({
-      data: [expect.objectContaining({
-        callId: 'call-a-b',
-        recipientUserId: 'user-b',
-        kind: 'CANCEL',
-      })],
-      skipDuplicates: true,
-    });
   });
 
   it('requires an active friendship before opening a direct chat', async () => {

@@ -5,7 +5,6 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
 
 import '../core/localization/app_localization.dart';
-import '../core/notifications/push_registration_coordinator.dart';
 import '../core/providers.dart';
 import '../features/auth/auth_controller.dart';
 import '../features/auth/login_page.dart';
@@ -66,12 +65,9 @@ final class _AuthGate extends ConsumerWidget {
       error: (error, _) => LoginPage(initialError: error),
       data: (session) => session == null
           ? const LoginPage()
-          : PushRegistrationCoordinator(
+          : IncomingFriendCallCoordinator(
               session: session,
-              child: IncomingFriendCallCoordinator(
-                session: session,
-                child: HomePage(session: session),
-              ),
+              child: HomePage(session: session),
             ),
     );
   }

@@ -1,8 +1,4 @@
 <?xml version="1.0" encoding="utf-8"?>
 <resources>
     <string name="app_name">中俄翻译</string>
-    <string name="incoming_call_private_title">实时来电</string>
-    <string name="incoming_call_private_description">解锁后可进入通话</string>
-    <string name="incoming_call_answer">接听</string>
-    <string name="incoming_call_decline">拒绝</string>
 </resources>

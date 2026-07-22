@@ -1,12 +1,9 @@
 import 'package:flutter/material.dart';
 import 'package:flutter_riverpod/flutter_riverpod.dart';
-import 'package:permission_handler/permission_handler.dart';
 
 import '../../core/errors.dart';
 import '../../core/localization/app_localization.dart';
 import '../../core/models.dart';
-import '../../core/notifications/push_notification_service.dart';
-import '../../core/notifications/push_registration_coordinator.dart';
 import '../auth/account_pages.dart';
 import '../auth/auth_controller.dart';
 import '../glossary/glossary_page.dart';
@@ -124,12 +121,6 @@ final class SettingsPage extends ConsumerWidget {
             ),
           ),
           const SizedBox(height: 12),
-          if (session != null && session.role != UserRole.guest) ...[
-            AppText('来电提醒', style: Theme.of(context).textTheme.titleSmall),
-            const SizedBox(height: 6),
-            const _IncomingCallSettingsCard(),
-            const SizedBox(height: 12),
-          ],
           AppText('语音播放', style: Theme.of(context).textTheme.titleSmall),
           const SizedBox(height: 6),
           Card(
@@ -259,7 +250,7 @@ final class SettingsPage extends ConsumerWidget {
           ),
           const SizedBox(height: 16),
           const AppText(
-            '版本 0.1.16 · 翻译结果仅供沟通辅助，高风险事项请人工复核。',
+            '版本 0.1.0 · 翻译结果仅供沟通辅助，高风险事项请人工复核。',
             textAlign: TextAlign.center,
             style: TextStyle(color: Colors.black54, fontSize: 12),
           ),
@@ -393,135 +384,5 @@ final class SettingsPage extends ConsumerWidget {
         ).showSnackBar(SnackBar(content: AppText(readableError(error))));
       }
     }
-  }
-}
-
-final class _IncomingCallSettingsCard extends ConsumerStatefulWidget {
-  const _IncomingCallSettingsCard();
-
-  @override
-  ConsumerState<_IncomingCallSettingsCard> createState() =>
-      _IncomingCallSettingsCardState();
-}
-
-final class _IncomingCallSettingsCardState
-    extends ConsumerState<_IncomingCallSettingsCard>
-    with WidgetsBindingObserver {
-  PushNotificationStatus? _status;
-
-  @override
-  void initState() {
-    super.initState();
-    WidgetsBinding.instance.addObserver(this);
-    _load();
-  }
-
-  @override
-  void didChangeAppLifecycleState(AppLifecycleState state) {
-    if (state == AppLifecycleState.resumed) _load();
-  }
-
-  Future<void> _load() async {
-    final status = await PushNotificationService.status();
-    if (mounted) setState(() => _status = status);
-  }
-
-  @override
-  void dispose() {
-    WidgetsBinding.instance.removeObserver(this);
-    super.dispose();
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final registration = ref.watch(pushRegistrationStateProvider);
-    final status = _status;
-    return Card(
-      child: Column(
-        children: [
-          ListTile(
-            leading: const Icon(Icons.phone_in_talk_outlined),
-            title: const AppText('后台来电推送'),
-            subtitle: AppText(
-              _registrationLabel(status, registration),
-            ),
-            trailing:
-                status == null || registration == PushRegistrationState.checking
-                    ? const SizedBox.square(
-                        dimension: 20,
-                        child: CircularProgressIndicator(strokeWidth: 2),
-                      )
-                    : Icon(
-                        registration == PushRegistrationState.ready
-                            ? Icons.check_circle_outline
-                            : Icons.error_outline,
-                      ),
-          ),
-          const Divider(height: 1),
-          ListTile(
-            leading: const Icon(Icons.notifications_active_outlined),
-            title: const AppText('允许来电通知'),
-            subtitle: AppText(
-              status?.notificationsEnabled == true ? '已允许' : '需要开启',
-            ),
-            trailing: const Icon(Icons.chevron_right),
-            onTap: _openNotificationPermission,
-          ),
-          if (status?.sdkInt != null && status!.sdkInt >= 26) ...[
-            const Divider(height: 1),
-            ListTile(
-              leading: const Icon(Icons.tune_outlined),
-              title: const AppText('来电铃声与横幅'),
-              subtitle: AppText(
-                status.channelEnabled ? '通知通道已开启' : '通知通道已关闭',
-              ),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () async {
-                await PushNotificationService.openIncomingCallChannelSettings();
-              },
-            ),
-          ],
-          if (status?.fullScreenPermissionRequired == true) ...[
-            const Divider(height: 1),
-            ListTile(
-              leading: const Icon(Icons.fullscreen_outlined),
-              title: const AppText('锁屏全屏提醒'),
-              subtitle: AppText(
-                status!.fullScreenAllowed ? '已允许' : '需要开启',
-              ),
-              trailing: const Icon(Icons.chevron_right),
-              onTap: () async {
-                await PushNotificationService.openFullScreenIntentSettings();
-              },
-            ),
-          ],
-        ],
-      ),
-    );
-  }
-
-  String _registrationLabel(
-    PushNotificationStatus? status,
-    PushRegistrationState registration,
-  ) {
-    if (status == null || registration == PushRegistrationState.checking) {
-      return '正在检查后台来电服务…';
-    }
-    if (!status.configured) return '当前安装包尚未配置系统推送';
-    return switch (registration) {
-      PushRegistrationState.ready => '系统推送已连接',
-      PushRegistrationState.serverDisabled => '服务器尚未启用系统推送',
-      PushRegistrationState.failed => '连接服务器失败，将自动重试',
-      PushRegistrationState.unavailable => '暂时无法取得系统推送标识',
-      PushRegistrationState.checking => '正在检查后台来电服务…',
-    };
-  }
-
-  Future<void> _openNotificationPermission() async {
-    final result = await Permission.notification.request();
-    if (!result.isGranted) {
-      await PushNotificationService.openNotificationSettings();
-    }
-    await _load();
   }
 }

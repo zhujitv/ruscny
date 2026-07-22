@@ -6,10 +6,4 @@
     <style name="NormalTheme" parent="@android:style/Theme.Material.Light.NoActionBar">
         <item name="android:windowBackground">?android:colorBackground</item>
     </style>
-    <style name="IncomingCallTheme" parent="@android:style/Theme.Material.NoActionBar">
-        <item name="android:windowBackground">#083F36</item>
-        <item name="android:colorAccent">#FFFFFF</item>
-        <item name="android:fontFamily">sans</item>
-        <item name="android:windowActionModeOverlay">true</item>
-    </style>
 </resources>

@@ -31,13 +31,8 @@ import {
   sendAccountVerificationEmail,
   userPasswordResetTokenHash,
 } from '../services/account-emails.js';
-import {
-  enqueueFriendCallPushJob,
-  wakeFriendCallPushWorker,
-} from '../services/friend-call-push-outbox.js';
 
 const RECENT_AUTH_WINDOW_MS = 10 * 60 * 1_000;
-const FRIEND_CALL_CANCEL_PUSH_TTL_MS = 60_000;
 const DELETED_USER_NAME = 'Deleted user';
 const DELETED_GUEST_NAME = 'Deleted guest';
 const avatarPreset = z.enum(['jade', 'ocean', 'amber', 'plum', 'graphite', 'rose']);
@@ -58,11 +53,6 @@ const credentials = z.object({
   deviceId: z.string().min(8).max(200),
   platform: z.enum(['ANDROID', 'IOS', 'UNKNOWN']).optional().default('UNKNOWN'),
 });
-const pushRegistration = z.object({
-  provider: z.literal('FCM'),
-  registrationId: z.string().trim().min(20).max(4_096),
-  bindingId: z.string().trim().uuid(),
-}).strict();
 
 const managedAvatarUrl = z
   .string()
@@ -92,14 +82,7 @@ async function revokeRefreshFamilyIfCurrent(claims: RefreshContext): Promise<voi
       refreshTokenJti: current.refreshTokenJti,
       refreshTokenHash: current.refreshTokenHash,
     },
-    data: {
-      revokedAt: new Date(),
-      refreshTokenHash: null,
-      refreshTokenJti: null,
-      pushToken: null,
-      pushBindingId: null,
-      pushTokenUpdatedAt: null,
-    },
+    data: { revokedAt: new Date(), refreshTokenHash: null, refreshTokenJti: null },
   });
   if (revoked.count === 1) {
     realtimeHub().disconnectDevice(current.userId, current.deviceId);
@@ -172,9 +155,6 @@ async function issueUserSession(user: {
         refreshTokenHash: secretHash(refreshToken, config.PASSWORD_PEPPER),
         revokedAt: null,
         lastSeenAt: new Date(),
-        pushToken: null,
-        pushBindingId: null,
-        pushTokenUpdatedAt: null,
       },
     });
   });
@@ -961,9 +941,6 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
             revokedAt: changedAt,
             refreshTokenHash: null,
             refreshTokenJti: null,
-            pushToken: null,
-            pushBindingId: null,
-            pushTokenUpdatedAt: null,
           },
         });
         await tx.userDevice.updateMany({
@@ -1011,144 +988,6 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
     };
   });
 
-  app.post('/v1/auth/push-registration', {
-    preHandler: authenticate,
-    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
-  }, async (request) => {
-    if (request.auth.role === 'GUEST') {
-      throw forbidden('FORMAL_ACCOUNT_REQUIRED', '访客身份不能注册来电推送');
-    }
-    const { registrationId, bindingId } = pushRegistration.parse(request.body);
-    const now = new Date();
-    await prisma.$transaction(async (tx) => {
-      // The token and binding are the high-entropy installation credentials.
-      // Advisory locks cover the first-registration case where no owner row
-      // exists yet; row locks below then serialize any durable owner transfer.
-      await tx.$executeRaw`
-        SELECT pg_advisory_xact_lock(hashtextextended(${registrationId}, 712025))
-      `;
-      await tx.$executeRaw`
-        SELECT pg_advisory_xact_lock(hashtextextended(${bindingId}, 712026))
-      `;
-      const ownershipRows = await tx.$queryRaw<Array<{
-        id: string;
-        userId: string;
-        deviceId: string;
-        sessionId: string;
-        authenticatedAt: Date;
-        revokedAt: Date | null;
-        pushToken: string | null;
-        pushBindingId: string | null;
-      }>>`
-        SELECT
-          "id", "userId", "deviceId", "sessionId", "authenticatedAt",
-          "revokedAt", "pushToken", "pushBindingId"
-        FROM "UserDevice"
-        WHERE
-          ("userId" = ${request.auth.subjectId} AND "deviceId" = ${request.auth.deviceId})
-          OR "pushToken" = ${registrationId}
-          OR "pushBindingId" = ${bindingId}
-        ORDER BY "id"
-        FOR UPDATE
-      `;
-      const current = ownershipRows.find((device) =>
-        device.userId === request.auth.subjectId &&
-        device.deviceId === request.auth.deviceId &&
-        device.sessionId === request.auth.sessionId &&
-        device.revokedAt === null);
-      if (!current) {
-        throw unauthorized('DEVICE_REVOKED', '此设备登录已被撤销');
-      }
-      const priorOwners = ownershipRows.filter((device) =>
-        device.id !== current.id &&
-        (device.pushToken === registrationId || device.pushBindingId === bindingId));
-      // Equal millisecond timestamps can occur under concurrent logins. Fail
-      // closed instead of letting either ambiguous session take ownership from
-      // the other; a fresh login produces an unambiguous later generation.
-      if (priorOwners.some((device) =>
-        device.authenticatedAt.getTime() >= current.authenticatedAt.getTime())) {
-        throw unauthorized('PUSH_SESSION_STALE', '此安装已有更新的登录，请重新登录后再试');
-      }
-
-      // One FCM registration belongs to one authenticated generation of one
-      // app installation. Only possession of the high-entropy FCM token or
-      // binding can transfer prior ownership; client-provided deviceId alone
-      // is never cross-account authority.
-      await tx.userDevice.updateMany({
-        where: {
-          id: { not: current.id },
-          OR: [
-            { pushToken: registrationId },
-            { pushBindingId: bindingId },
-          ],
-        },
-        data: {
-          pushToken: null,
-          pushBindingId: null,
-          pushTokenUpdatedAt: null,
-        },
-      });
-      const registered = await tx.userDevice.updateMany({
-        where: {
-          id: current.id,
-          sessionId: request.auth.sessionId,
-          revokedAt: null,
-        },
-        data: {
-          platform: 'ANDROID',
-          pushToken: registrationId,
-          pushBindingId: bindingId,
-          pushTokenUpdatedAt: now,
-          lastSeenAt: now,
-        },
-      });
-      if (registered.count !== 1) {
-        throw unauthorized('DEVICE_REVOKED', '此设备登录已被撤销');
-      }
-    });
-    return {
-      ok: true,
-      data: {
-        registered: true,
-        deliveryEnabled: config.PUSH_PROVIDER === 'fcm',
-      },
-    };
-  });
-
-  app.delete('/v1/auth/push-registration', {
-    preHandler: authenticate,
-    config: { rateLimit: { max: 30, timeWindow: '1 minute' } },
-  }, async (request) => {
-    if (request.auth.role === 'GUEST') {
-      throw forbidden('FORMAL_ACCOUNT_REQUIRED', '访客身份不能注销来电推送');
-    }
-    const { registrationId, bindingId } = pushRegistration.parse(request.body);
-    await prisma.userDevice.updateMany({
-      where: {
-        userId: request.auth.subjectId,
-        deviceId: request.auth.deviceId,
-        sessionId: request.auth.sessionId,
-        revokedAt: null,
-        // Compare-and-clear protects a newly refreshed token from a delayed
-        // deletion request for the previous registration.
-        pushToken: registrationId,
-        pushBindingId: bindingId,
-      },
-      data: {
-        pushToken: null,
-        pushBindingId: null,
-        pushTokenUpdatedAt: null,
-      },
-    });
-    return {
-      ok: true,
-      data: {
-        registered: false,
-        deliveryEnabled: config.PUSH_PROVIDER === 'fcm',
-      },
-    };
-  });
-
   app.delete('/v1/auth/devices/:deviceId', { preHandler: authenticate }, async (request) => {
     if (request.auth.role === 'GUEST') {
       throw forbidden('FORMAL_ACCOUNT_REQUIRED', '访客身份没有可管理的登录设备');
@@ -1162,9 +1001,6 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
         revokedAt: new Date(),
         refreshTokenHash: null,
         refreshTokenJti: null,
-        pushToken: null,
-        pushBindingId: null,
-        pushTokenUpdatedAt: null,
       },
     });
     realtimeHub().disconnectDevice(request.auth.subjectId, deviceId);
@@ -1203,14 +1039,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
               sessionId: request.auth.sessionId,
               revokedAt: null,
             },
-            data: {
-              revokedAt: new Date(),
-              refreshTokenHash: null,
-              refreshTokenJti: null,
-              pushToken: null,
-              pushBindingId: null,
-              pushTokenUpdatedAt: null,
-            },
+            data: { revokedAt: new Date(), refreshTokenHash: null, refreshTokenJti: null },
           });
           if (revoked.count === 1) {
             realtimeHub().disconnectDevice(request.auth.subjectId, request.auth.deviceId);
@@ -1232,14 +1061,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
             refreshTokenJti: claims.jti,
             refreshTokenHash: secretHash(body.refreshToken, config.PASSWORD_PEPPER),
           },
-          data: {
-            revokedAt: new Date(),
-            refreshTokenHash: null,
-            refreshTokenJti: null,
-            pushToken: null,
-            pushBindingId: null,
-            pushTokenUpdatedAt: null,
-          },
+          data: { revokedAt: new Date(), refreshTokenHash: null, refreshTokenJti: null },
         });
         if (revoked.count === 1) {
           realtimeHub().disconnectDevice(claims.userId, claims.deviceId);
@@ -1344,14 +1166,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
         }
         await tx.userDevice.updateMany({
           where: { userId: user.id, revokedAt: null },
-          data: {
-            revokedAt: now,
-            refreshTokenHash: null,
-            refreshTokenJti: null,
-            pushToken: null,
-            pushBindingId: null,
-            pushTokenUpdatedAt: null,
-          },
+          data: { revokedAt: now, refreshTokenHash: null, refreshTokenJti: null },
         });
         await tx.userPasswordResetToken.updateMany({
           where: { userId: user.id, usedAt: null },
@@ -1421,7 +1236,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       expectedPasswordHash = account.passwordHash;
     }
 
-    const deletionResult = await prisma.$transaction(async (tx) => {
+    const endedConversationIds = await prisma.$transaction(async (tx) => {
       if (request.auth.role === 'GUEST') {
         const guestIdentityId = request.auth.guestIdentityId ?? request.auth.subjectId;
         const memberships = await tx.participant.findMany({
@@ -1505,7 +1320,7 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
           },
           update: { status: 'COMPLETED', completedAt: deletedAt },
         });
-        return { endedConversationIds: [], endedCalls: [] };
+        return [];
       }
 
       const conversations = await tx.conversation.findMany({
@@ -1554,37 +1369,6 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
       if (disabled.count !== 1) {
         throw unauthorized('ACCOUNT_STATE_CHANGED', '账号状态已变更，请重试');
       }
-
-      const endedCalls = await tx.friendCall.updateManyAndReturn({
-        where: {
-          status: { in: ['RINGING', 'ACTIVE'] },
-          OR: [
-            { callerId: request.auth.subjectId },
-            { calleeId: request.auth.subjectId },
-          ],
-        },
-        data: {
-          status: 'ENDED',
-          endedAt: deletedAt,
-          endedById: request.auth.subjectId,
-        },
-        select: {
-          id: true,
-          callerId: true,
-          calleeId: true,
-          mediaType: true,
-        },
-      });
-      await Promise.all(endedCalls.map((call) =>
-        enqueueFriendCallPushJob(tx, {
-          callId: call.id,
-          recipientUserId: call.calleeId,
-          kind: 'CANCEL',
-          expiresAt: new Date(deletedAt.getTime() + FRIEND_CALL_CANCEL_PUSH_TTL_MS),
-          // The deleting callee's device credentials are erased below. Keep a
-          // short-lived outbox copy only for its authoritative cancel event.
-          snapshotRecipientTargets: call.calleeId === request.auth.subjectId,
-        })));
 
       // Preserve immutable utterance text, language, timestamps, sequence and
       // participantId while removing direct personal identifiers.
@@ -1710,9 +1494,6 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
           revokedAt: deletedAt,
           refreshTokenHash: null,
           refreshTokenJti: null,
-          pushToken: null,
-          pushBindingId: null,
-          pushTokenUpdatedAt: null,
         },
       });
       await tx.dataDeletionRequest.upsert({
@@ -1724,29 +1505,13 @@ export async function registerAuthRoutes(app: FastifyInstance): Promise<void> {
         },
         update: { status: 'COMPLETED', completedAt: deletedAt },
       });
-      return {
-        endedConversationIds: ownedActive.map((conversation) => conversation.id),
-        endedCalls,
-      };
+      return ownedActive.map((conversation) => conversation.id);
     }, { maxWait: 10_000, timeout: 60_000 });
-    for (const conversationId of deletionResult.endedConversationIds) {
+    for (const conversationId of endedConversationIds) {
       realtimeHub().emitToConversation(conversationId, 'room.ended', {
         conversationId,
         endedAt: deletedAt,
       });
-    }
-    if (deletionResult.endedCalls.length) wakeFriendCallPushWorker();
-    for (const call of deletionResult.endedCalls) {
-      realtimeHub().stopFriendCallTranslation(call.id);
-      const payload = {
-        callId: call.id,
-        status: 'ENDED',
-        mediaType: call.mediaType,
-      };
-      realtimeHub().emitToSubject(call.callerId, 'friend.call.ended', payload);
-      if (call.calleeId !== call.callerId) {
-        realtimeHub().emitToSubject(call.calleeId, 'friend.call.ended', payload);
-      }
     }
     realtimeHub().disconnectSubject(request.auth.subjectId);
     return { ok: true, data: {} };

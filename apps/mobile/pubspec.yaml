@@ -1,7 +1,7 @@
 name: tooyei_translator
 description: 中俄双手机实时语音翻译客户端。
 publish_to: none
-version: 0.1.16+10024
+version: 0.1.15+8023
 
 environment:
   sdk: ">=3.5.0 <4.0.0"

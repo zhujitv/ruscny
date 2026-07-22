@@ -1,5 +1,4 @@
 import 'package:flutter_test/flutter_test.dart';
-import 'package:tooyei_translator/core/errors.dart';
 import 'package:tooyei_translator/core/models.dart';
 import 'package:tooyei_translator/features/friends/friend_call_page.dart';
 import 'package:tooyei_translator/features/friends/incoming_call_coordinator.dart';
@@ -98,57 +97,6 @@ void main() {
         shouldDiscardPendingIncomingCallAction(
           pendingCallId: 'call-1',
           activeCallId: 'call-1',
-        ),
-        isFalse,
-      );
-    });
-
-    test('native response retries are spaced and reset for a newer action', () {
-      final tracker = IncomingCallActionAttemptTracker();
-      final now = DateTime.utc(2026, 7, 22, 12);
-      const decline = (action: 'decline', callId: 'call-1');
-      const answer = (action: 'answer', callId: 'call-1');
-
-      expect(tracker.shouldAttempt(decline, now: now), isTrue);
-      tracker.begin(decline, now: now);
-      expect(
-        tracker.shouldAttempt(
-          decline,
-          now: now.add(incomingCallRecoveryInterval),
-        ),
-        isFalse,
-      );
-      expect(
-        tracker.shouldAttempt(
-          decline,
-          now: now.add(incomingCallActionRetryInterval),
-        ),
-        isTrue,
-      );
-      expect(tracker.shouldAttempt(answer, now: now), isTrue);
-
-      tracker.reset();
-      expect(tracker.shouldAttempt(decline, now: now), isTrue);
-    });
-
-    test('only terminal server response errors authorize native action ack',
-        () {
-      expect(
-        isAuthoritativeIncomingCallActionRejection(
-          const AppException(
-            '通话状态已变化',
-            code: 'FRIEND_CALL_STATE_CHANGED',
-            statusCode: 409,
-          ),
-        ),
-        isTrue,
-      );
-      expect(
-        isAuthoritativeIncomingCallActionRejection(
-          const AppException(
-            '无法连接服务器',
-            code: 'NETWORK_OFFLINE',
-          ),
         ),
         isFalse,
       );

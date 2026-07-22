@@ -6,12 +6,6 @@ plugins {
     id("dev.flutter.flutter-gradle-plugin")
 }
 
-// CI intentionally builds without production Firebase material. The ignored
-// google-services.json enables FCM only in controlled release/test builds.
-if (file("google-services.json").isFile) {
-    apply(plugin = "com.google.gms.google-services")
-}
-
 android {
     namespace = "com.tooyei.translator"
     compileSdk = flutter.compileSdkVersion
@@ -83,9 +77,4 @@ dependencies {
     // matching Live+ ARTC credentials stay server-side and are never compiled
     // into the APK.
     implementation("com.aliyun.aio:AliVCSDK_ARTC:7.11.0")
-
-    // Keep Firebase Android libraries on one verified, compatible release set.
-    // Messaging is native so incoming calls do not depend on a Flutter isolate.
-    implementation(platform("com.google.firebase:firebase-bom:34.16.0"))
-    implementation("com.google.firebase:firebase-messaging")
 }

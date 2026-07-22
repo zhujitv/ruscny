@@ -224,14 +224,7 @@ describe('email account verification and password recovery', () => {
     });
     expect(mocks.transaction.userDevice.updateMany).toHaveBeenCalledWith({
       where: { userId: 'user-a', revokedAt: null },
-      data: {
-        revokedAt: expect.any(Date),
-        refreshTokenHash: null,
-        refreshTokenJti: null,
-        pushToken: null,
-        pushBindingId: null,
-        pushTokenUpdatedAt: null,
-      },
+      data: { revokedAt: expect.any(Date), refreshTokenHash: null, refreshTokenJti: null },
     });
     expect(mocks.transaction.adminPasswordResetToken.updateMany).toHaveBeenCalled();
     expect(mocks.disconnectSubject).toHaveBeenCalledWith('user-a');

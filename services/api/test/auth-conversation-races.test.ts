@@ -268,9 +268,6 @@ describe('join versus end/expiry races', () => {
         revokedAt: expect.any(Date),
         refreshTokenHash: null,
         refreshTokenJti: null,
-        pushToken: null,
-        pushBindingId: null,
-        pushTokenUpdatedAt: null,
       },
     });
     expect(mocks.disconnectDevice).toHaveBeenCalledWith('customer-a', 'customer-device-a');
@@ -310,9 +307,6 @@ describe('join versus end/expiry races', () => {
         revokedAt: expect.any(Date),
         refreshTokenHash: null,
         refreshTokenJti: null,
-        pushToken: null,
-        pushBindingId: null,
-        pushTokenUpdatedAt: null,
       },
     });
     expect(mocks.prisma.userDevice.updateMany).toHaveBeenNthCalledWith(2, {
@@ -328,9 +322,6 @@ describe('join versus end/expiry races', () => {
         revokedAt: expect.any(Date),
         refreshTokenHash: null,
         refreshTokenJti: null,
-        pushToken: null,
-        pushBindingId: null,
-        pushTokenUpdatedAt: null,
       },
     });
     expect(mocks.disconnectDevice).toHaveBeenCalledTimes(1);
@@ -1024,14 +1015,7 @@ describe('refresh token compare-and-swap', () => {
         refreshTokenJti: 'old-login-rotation',
         refreshTokenHash: secretHash(oldRefreshToken, config.PASSWORD_PEPPER),
       },
-      data: {
-        revokedAt: expect.any(Date),
-        refreshTokenHash: null,
-        refreshTokenJti: null,
-        pushToken: null,
-        pushBindingId: null,
-        pushTokenUpdatedAt: null,
-      },
+      data: { revokedAt: expect.any(Date), refreshTokenHash: null, refreshTokenJti: null },
     });
     expect(mocks.disconnectDevice).not.toHaveBeenCalled();
   });

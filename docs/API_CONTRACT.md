@@ -358,52 +358,6 @@ Guest Access Token 与正式账号使用同一短有效期（默认 15 分钟）
 
 不返回 Refresh Token、哈希、pushToken 或内部数据库 ID。Guest 返回 `FORMAL_ACCOUNT_REQUIRED`。
 
-### `POST /auth/push-registration`
-
-完整路径为 `POST /v1/auth/push-registration`。正式账号把当前 Android 安装的 FCM registration 和本地绑定代次绑定到 Bearer Token 对应的 `userId + deviceId + sessionId`。请求必须携带当前 Access Token，body 是严格对象：`provider` 只允许字面值 `FCM`，`registrationId` 是去除首尾空白后 20–4096 字符的不透明字符串，`bindingId` 是原生端为当前登录账号生成并持久化的随机 UUID：
-
-```json
-{
-  "provider": "FCM",
-  "registrationId": "opaque-fcm-registration",
-  "bindingId": "06927bcd-9b16-4480-a031-33fbb4a84732"
-}
-```
-
-成功响应：
-
-```json
-{
-  "ok": true,
-  "data": {
-    "registered": true,
-    "deliveryEnabled": true
-  }
-}
-```
-
-`registered: true` 只表示服务端保存了绑定，不代表推送供应商已经启用。`deliveryEnabled` 是服务端受控能力开关：只有 `true` 时客户端才能显示“系统推送已连接”并启用原生来电处理；为 `false` 时客户端必须显示服务端尚未启用、保持原生来电禁用，并可在恢复后重新同步，不能把 registration 已保存解释为可收到来电。
-
-服务端不接受客户端指定账号或设备。一个 `bindingId` 只代表当前安装与当前账号的一代不透明绑定；账号切换时原生端清除旧代次并为新账号生成新 UUID。服务端只凭高熵 registration 或 `bindingId` 在同一事务中清除其旧账号/设备归属，不把客户端提交的 `deviceId` 单独视为跨账号写权限。推送 payload 同时携带已保存的 `bindingId`；原生接收端只有在 payload 代次与当前本地代次完全相同时才允许展示或取消来电，因此迟到的旧账号消息会被拒绝。认证时间不早于当前会话的旧归属会导致注册返回 `401 PUSH_SESSION_STALE`；相同毫秒的并发登录也按冲突拒绝，用户重新登录后可产生明确的新代次。
-
-响应不回显 registration 或 binding。Guest 返回 `403 FORMAL_ACCOUNT_REQUIRED`，已撤销或不匹配的当前设备会返回 `401 DEVICE_REVOKED`，非 `FCM` provider、多余字段或无效 registration/binding 按校验错误拒绝。每个路由每分钟最多 30 次请求。
-
-### `DELETE /auth/push-registration`
-
-完整路径为 `DELETE /v1/auth/push-registration`。请求认证、严格 body、值域和限速与注册接口相同，因此也必须同时提交 `provider`、`registrationId` 和 UUID `bindingId`。服务端按当前设备会话、`registrationId` 和 `bindingId` 做 compare-and-clear；迟到的旧令牌或旧代次删除请求不会清除该安装稍后上传的新绑定。即使该 registration/binding 已经不再绑定，也会幂等返回：
-
-```json
-{
-  "ok": true,
-  "data": {
-    "registered": false,
-    "deliveryEnabled": true
-  }
-}
-```
-
-`deliveryEnabled` 仍反映当前服务端供应商开关，不表示已经注销的设备可以收取消息。退出登录、撤销设备、停用账号、密码重置和账号注销也会由服务端清除 registration 与 binding。
-
 ### `DELETE /auth/devices/:deviceId`
 
 正式账号撤销自己名下指定设备，幂等返回 `{deviceId}`。服务端立即设置 revokedAt 并清空该设备 Refresh Token；此后该设备已有 Access Token 的每次 HTTP/Socket 认证也因设备检查返回 `DEVICE_REVOKED`。客户端撤销当前设备时应清空本地 Token 并返回登录页。

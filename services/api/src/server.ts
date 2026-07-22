@@ -13,23 +13,17 @@ import {
   startTtsGenerationWorker,
   type TtsGenerationWorker,
 } from './services/tts-generation.js';
-import {
-  startFriendCallPushWorker,
-  type FriendCallPushWorker,
-} from './services/friend-call-push-outbox.js';
 
 const app = await buildApp();
 let audioDeletionWorker: AudioDeletionWorker | undefined;
 let summaryEmailWorker: SummaryEmailWorker | undefined;
 let ttsGenerationWorker: TtsGenerationWorker | undefined;
-let friendCallPushWorker: FriendCallPushWorker | undefined;
 
 const shutdown = async (signal: string) => {
   app.log.info({ signal }, 'shutting down');
   await audioDeletionWorker?.stop();
   await summaryEmailWorker?.stop();
   await ttsGenerationWorker?.stop();
-  await friendCallPushWorker?.stop();
   await app.close();
   await prisma.$disconnect();
   process.exit(0);
@@ -43,7 +37,6 @@ try {
   audioDeletionWorker = startAudioDeletionWorker({ logger: app.log });
   summaryEmailWorker = startSummaryEmailWorker({ logger: app.log });
   ttsGenerationWorker = startTtsGenerationWorker({ logger: app.log });
-  friendCallPushWorker = startFriendCallPushWorker({ logger: app.log });
 } catch (error) {
   app.log.error(error);
   await prisma.$disconnect();

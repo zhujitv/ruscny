@@ -204,21 +204,6 @@ final class AuthRepository {
   Future<void> revokeDevice(String deviceId) =>
       _api.delete('/auth/devices/${Uri.encodeComponent(deviceId)}');
 
-  Future<bool> registerPushNotification(
-    String registrationId, {
-    required String bindingId,
-  }) async {
-    final payload = await _api.postMap(
-      '/auth/push-registration',
-      data: {
-        'provider': 'FCM',
-        'registrationId': registrationId,
-        'bindingId': bindingId,
-      },
-    );
-    return payload['deliveryEnabled'] == true;
-  }
-
   Future<void> logout() async {
     try {
       await _api.postMap(

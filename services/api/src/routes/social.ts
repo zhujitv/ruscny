@@ -11,12 +11,6 @@ import {
   conversationInclude,
   participantDto,
 } from '../services/conversations.js';
-import {
-  enqueueFriendCallPushJob,
-  wakeFriendCallPushWorker,
-} from '../services/friend-call-push-outbox.js';
-
-const friendCallCancelPushTtlMs = 60_000;
 
 const participantProfileSchema = z.object({
   displayName: profileTextSchema(100),
@@ -238,7 +232,6 @@ export async function registerSocialRoutes(app: FastifyInstance): Promise<void> 
     assertRegistered(request.auth.role);
     const { friendId } = z.object({ friendId: z.string() }).parse(request.params);
     const [userAId, userBId] = canonicalPair(request.auth.subjectId, friendId);
-    const callEndedAt = new Date();
     const removal = await prisma.$transaction(async (tx) => {
       await lockUserRows(tx, [userAId, userBId]);
       const conversation = await tx.conversation.findUnique({
@@ -269,19 +262,11 @@ export async function registerSocialRoutes(app: FastifyInstance): Promise<void> 
             { callerId: userBId, calleeId: userAId },
           ],
         },
-        data: { status: 'ENDED', endedAt: callEndedAt, endedById: request.auth.subjectId },
+        data: { status: 'ENDED', endedAt: new Date(), endedById: request.auth.subjectId },
         select: { id: true, callerId: true, calleeId: true, mediaType: true },
       });
-      await Promise.all(endedCalls.map((call) =>
-        enqueueFriendCallPushJob(tx, {
-          callId: call.id,
-          recipientUserId: call.calleeId,
-          kind: 'CANCEL',
-          expiresAt: new Date(callEndedAt.getTime() + friendCallCancelPushTtlMs),
-        })));
       return { conversation, endedCalls };
     });
-    if (removal.endedCalls.length) wakeFriendCallPushWorker();
     realtimeHub().emitToSubject(friendId, 'friend.removed', {
       userId: request.auth.subjectId,
     });

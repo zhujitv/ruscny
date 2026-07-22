@@ -73,27 +73,15 @@ final class AudioCueService {
     }
   }
 
-  static Future<void> dismissIncomingCallNotification(String callId) async {
+  static Future<void> cancelIncomingCallNotification(String callId) async {
     try {
-      await _channel.invokeMethod<void>('dismissIncomingCall', {
+      await _channel.invokeMethod<void>('cancelIncomingCall', {
         'callId': callId,
       });
     } on MissingPluginException {
       // No native call notification exists on this platform.
     } on PlatformException {
       // The notification may already have expired or been removed.
-    }
-  }
-
-  static Future<void> closeIncomingCallNotification(String callId) async {
-    try {
-      await _channel.invokeMethod<void>('closeIncomingCall', {
-        'callId': callId,
-      });
-    } on MissingPluginException {
-      // No native call notification exists on this platform.
-    } on PlatformException {
-      // The authoritative call transition still succeeds without local UI.
     }
   }
 
@@ -110,29 +98,6 @@ final class AudioCueService {
       return null;
     } on PlatformException {
       return null;
-    }
-  }
-
-  /// Confirms that Flutter has durably handled the exact native call action.
-  ///
-  /// Android compares both [callId] and [action] before clearing its persisted
-  /// value. This prevents an acknowledgement for an earlier `show` action from
-  /// deleting a later `answer` or `decline` tap for the same call.
-  static Future<bool> ackIncomingCallAction({
-    required String callId,
-    required String action,
-  }) async {
-    try {
-      final acknowledged =
-          await _channel.invokeMethod<bool>('ackIncomingCallAction', {
-        'callId': callId,
-        'action': action,
-      });
-      return acknowledged == true;
-    } on MissingPluginException {
-      return false;
-    } on PlatformException {
-      return false;
     }
   }
 

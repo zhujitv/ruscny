@@ -52,33 +52,11 @@ describe('production configuration guards', () => {
       S3_SECRET_ACCESS_KEY: '',
       RESEND_API_KEY: '',
       EMAIL_FROM: '',
-      FCM_PROJECT_ID: '',
-      FCM_CLIENT_EMAIL: '',
-      FCM_PRIVATE_KEY: '',
     });
 
     expect(parsed.AUDIO_URL_SIGNING_SECRET).toBeUndefined();
     expect(parsed.S3_ENDPOINT).toBeUndefined();
     expect(parsed.RESEND_API_KEY).toBeUndefined();
-    expect(parsed.FCM_PROJECT_ID).toBeUndefined();
-  });
-
-  it('requires a complete server-side FCM credential when push is enabled', () => {
-    expect(loadConfig({}).PUSH_PROVIDER).toBe('disabled');
-    expect(() => loadConfig({ PUSH_PROVIDER: 'fcm' })).toThrow(
-      'FCM_PROJECT_ID, FCM_CLIENT_EMAIL and FCM_PRIVATE_KEY are required',
-    );
-    const parsed = loadConfig({
-      PUSH_PROVIDER: 'fcm',
-      FCM_PROJECT_ID: 'translator-test',
-      FCM_CLIENT_EMAIL: 'push@example.test',
-      FCM_PRIVATE_KEY: 'test-private-key-value-with-at-least-32-characters',
-    });
-    expect(parsed).toMatchObject({
-      PUSH_PROVIDER: 'fcm',
-      ANDROID_PACKAGE_NAME: 'com.tooyei.translator',
-      FCM_PROJECT_ID: 'translator-test',
-    });
   });
 
   it('keeps administrator bootstrap explicit and bounds reset-link lifetime', () => {
